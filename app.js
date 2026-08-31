@@ -15,7 +15,7 @@ const parseDate=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(Date.U
 const fmt=s=>{if(!s)return '—';const[y,m,d]=s.split('-');return `${d}/${m}/${y}`};
 const parseDecimal=value=>{
   const normalized=String(value??'').trim().replace(/\s/g,'').replace(',','.');
-  if(!/^\d+(\.\d{{1,2}})?$/.test(normalized)) return NaN;
+  if(!/^\d+(\.\d{1,2})?$/.test(normalized)) return NaN;
   return Number(normalized);
 };
 const kg=n=>Number(n).toLocaleString('es-CL',{minimumFractionDigits:1,maximumFractionDigits:2})+' kg';
@@ -229,20 +229,52 @@ function initialProfileView(){
 async function createProfile(e){
   e.preventDefault();
   const msg=document.getElementById('profileMsg');
+  msg.textContent='';
+
+  const initialWeight=parseDecimal(document.getElementById('initial').value);
+  const targetRaw=document.getElementById('target').value.trim();
+  const targetWeight=targetRaw?parseDecimal(targetRaw):null;
+  const initialAbdomen=parseDecimal(document.getElementById('initialAbdomen').value);
+
+  if(!Number.isFinite(initialWeight)||initialWeight<20||initialWeight>350){
+    msg.textContent='Ingresa un peso inicial válido. Puedes usar coma o punto y hasta 2 decimales.';
+    return;
+  }
+  if(targetRaw && (!Number.isFinite(targetWeight)||targetWeight<20||targetWeight>350)){
+    msg.textContent='Ingresa un peso meta válido. Puedes usar coma o punto y hasta 2 decimales.';
+    return;
+  }
+  if(!Number.isFinite(initialAbdomen)||initialAbdomen<30||initialAbdomen>250){
+    msg.textContent='Ingresa una circunferencia abdominal válida entre 30 y 250 cm, con hasta 2 decimales.';
+    return;
+  }
+
   const p={
     user_id:currentUser.id,
     full_name:document.getElementById('name').value.trim(),
     birth_date:document.getElementById('birth').value||null,
     start_date:document.getElementById('start').value,
     planned_weeks:Number(document.getElementById('weeks').value),
-    initial_weight_kg:Number(document.getElementById('initial').value),
-    target_weight_kg:document.getElementById('target').value?Number(document.getElementById('target').value):null
+    initial_weight_kg:initialWeight,
+    target_weight_kg:targetWeight,
+    initial_abdominal_circumference_cm:initialAbdomen
   };
+
   try{
-    const arr=await dbInsert('profiles',p);profile=arr[0];
-    await dbInsert('weight_records',{user_id:currentUser.id,measured_on:p.start_date,weight_kg:p.initial_weight_kg,is_initial:true});
-    await loadData();render();
-  }catch(err){msg.textContent=err.message}
+    const arr=await dbInsert('profiles',p);
+    profile=arr[0];
+    await dbInsert('weight_records',{
+      user_id:currentUser.id,
+      measured_on:p.start_date,
+      weight_kg:p.initial_weight_kg,
+      abdominal_circumference_cm:p.initial_abdominal_circumference_cm,
+      is_initial:true
+    });
+    await loadData();
+    render();
+  }catch(err){
+    msg.textContent='No fue posible crear el seguimiento: '+err.message;
+  }
 }
 
 function dashboardView(){
@@ -266,7 +298,9 @@ function dashboardView(){
     </section>
     <section class="metrics">
       <div class="metric"><span>Peso actual</span><strong>${kg(latest.weight_kg)}</strong></div>
-      <div class="metric"><span>Cambio</span><strong>${change>0?'+':''}${change.toFixed(1)} kg</strong></div>
+      <div class="metric"><span>Cambio peso</span><strong>${change>0?'+':''}${change.toFixed(2)} kg</strong></div>
+      <div class="metric"><span>Cintura actual</span><strong>${cm(currentAbdomen)}</strong></div>
+      <div class="metric"><span>Cambio cintura</span><strong>${abdomenChange===null?'—':`${abdomenChange>0?'+':''}${abdomenChange.toFixed(2)} cm`}</strong></div>
       <div class="metric"><span>Semana</span><strong>${currentWeek} / ${profile.planned_weeks}</strong></div>
       <div class="metric"><span>Peso meta</span><strong>${goal?kg(goal):'—'}</strong></div>
     </section>
@@ -275,8 +309,9 @@ function dashboardView(){
       <p class="muted">La fecha de hoy viene propuesta. Puedes cambiarla para registrar un dato anterior.</p>
       <form id="weightForm"><div class="grid">
         <div><label>Fecha</label><input id="date" type="date" value="${today()}" required></div>
-        <div><label>Peso (kg)</label><input id="weight" type="number" inputmode="decimal" min="20" max="350" step="0.1" required></div>
-      </div><button class="primary" style="margin-top:12px">Guardar peso</button><p id="weightMsg" class="error"></p></form>
+        <div><label>Peso (kg)</label><input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 94,85" required></div>
+        <div><label>Circunferencia abdominal (cm)</label><input id="abdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 111,50" required></div>
+      </div><button class="primary" style="margin-top:12px">Guardar registro</button><p id="weightMsg" class="error"></p></form>
     </section>
     <section class="card">
       <h2 class="section-title">Peso por semana</h2>
@@ -285,8 +320,8 @@ function dashboardView(){
     </section>
     <section class="card">
       <h2 class="section-title">Historial</h2>
-      <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th></tr></thead>
-      <tbody>${sorted.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOf(r.measured_on)}</td><td>${kg(r.weight_kg)}</td></tr>`).join('')}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circ. abdominal</th></tr></thead>
+      <tbody>${sorted.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOf(r.measured_on)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table></div>
     </section>`);
   document.getElementById('weightForm').addEventListener('submit',addWeight);
   document.getElementById('editPlan').addEventListener('click',editPlan);
@@ -325,24 +360,81 @@ function drawChart(sorted){
 async function addWeight(e){
   e.preventDefault();
   const measured_on=document.getElementById('date').value;
-  const weight_kg=Number(document.getElementById('weight').value);
+  const weight_kg=parseDecimal(document.getElementById('weight').value);
+  const abdominal_circumference_cm=parseDecimal(document.getElementById('abdomen').value);
   const msg=document.getElementById('weightMsg');
-  if(parseDate(measured_on)<parseDate(profile.start_date)){msg.textContent='La fecha no puede ser anterior al inicio del seguimiento.';return}
+  msg.textContent='';
+
+  if(parseDate(measured_on)<parseDate(profile.start_date)){
+    msg.textContent='La fecha no puede ser anterior al inicio del seguimiento.';
+    return;
+  }
+  if(!Number.isFinite(weight_kg)||weight_kg<20||weight_kg>350){
+    msg.textContent='Ingresa un peso válido. Puedes usar coma o punto y hasta 2 decimales.';
+    return;
+  }
+  if(!Number.isFinite(abdominal_circumference_cm)||abdominal_circumference_cm<30||abdominal_circumference_cm>250){
+    msg.textContent='Ingresa una circunferencia abdominal válida entre 30 y 250 cm, con hasta 2 decimales.';
+    return;
+  }
+
   try{
-    await dbInsert('weight_records',{user_id:currentUser.id,measured_on,weight_kg,is_initial:false});
-    await loadData();render();
-  }catch(err){msg.textContent=err.message}
+    await dbInsert('weight_records',{
+      user_id:currentUser.id,
+      measured_on,
+      weight_kg,
+      abdominal_circumference_cm,
+      is_initial:false
+    });
+    await loadData();
+    render();
+  }catch(err){
+    msg.textContent='No fue posible guardar el registro: '+err.message;
+  }
 }
 
 async function editPlan(){
-  const weeks=prompt('Duración del seguimiento en semanas:',String(profile.planned_weeks));if(weeks===null)return;
-  const target=prompt('Peso meta en kg. Déjalo vacío para eliminar la meta:',profile.target_weight_kg??'');
+  const weeks=prompt('Duración del seguimiento en semanas:',String(profile.planned_weeks));
+  if(weeks===null)return;
+
+  const target=prompt('Peso meta en kg. Puedes usar coma o punto. Déjalo vacío para eliminar la meta:',profile.target_weight_kg??'');
+  if(target===null)return;
+
+  const abdomen=prompt('Circunferencia abdominal inicial en cm. Puedes usar coma o punto:',profile.initial_abdominal_circumference_cm??'');
+  if(abdomen===null)return;
+
   const nextWeeks=Math.max(1,Math.min(104,Number(weeks)||profile.planned_weeks));
-  const nextTarget=target===''?null:Number(target);
+  const nextTarget=target.trim()===''?null:parseDecimal(target);
+  const nextAbdomen=abdomen.trim()===''?null:parseDecimal(abdomen);
+
+  if(target.trim()!=='' && (!Number.isFinite(nextTarget)||nextTarget<20||nextTarget>350)){
+    alert('Peso meta inválido.');
+    return;
+  }
+  if(abdomen.trim()!=='' && (!Number.isFinite(nextAbdomen)||nextAbdomen<30||nextAbdomen>250)){
+    alert('Circunferencia abdominal inicial inválida.');
+    return;
+  }
+
   try{
-    await dbUpdate('profiles',`user_id=eq.${encodeURIComponent(currentUser.id)}`,{planned_weeks:nextWeeks,target_weight_kg:nextTarget,updated_at:new Date().toISOString()});
-    await loadData();render();
-  }catch(err){alert(err.message)}
+    await dbUpdate('profiles',`user_id=eq.${encodeURIComponent(currentUser.id)}`,{
+      planned_weeks:nextWeeks,
+      target_weight_kg:nextTarget,
+      initial_abdominal_circumference_cm:nextAbdomen,
+      updated_at:new Date().toISOString()
+    });
+
+    if(nextAbdomen!==null){
+      await dbUpdate('weight_records',`user_id=eq.${encodeURIComponent(currentUser.id)}&is_initial=eq.true`,{
+        abdominal_circumference_cm:nextAbdomen
+      });
+    }
+
+    await loadData();
+    render();
+  }catch(err){
+    alert('No fue posible actualizar el plan: '+err.message);
+  }
 }
 
 async function logout(){
