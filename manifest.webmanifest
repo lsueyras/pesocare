@@ -1,0 +1,17 @@
+{
+  "name": "PesoCare",
+  "short_name": "PesoCare",
+  "description": "Seguimiento personal de peso",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#175cd3",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
