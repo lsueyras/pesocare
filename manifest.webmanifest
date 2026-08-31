@@ -3,6 +3,7 @@
   "short_name": "PesoCare",
   "description": "Seguimiento personal de peso",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#f4f7fb",
   "theme_color": "#175cd3",

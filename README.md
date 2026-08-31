@@ -1,30 +1,28 @@
-# PesoCare Web Deploy
+# PesoCare Web Deploy v2
 
-Versión estática lista para publicar en GitHub Pages, Netlify, Vercel o cualquier hosting HTTPS.
+Versión robusta sin dependencias JavaScript externas.
 
-## Backend ya conectado
-Supabase project:
-`https://lqmfgxftazazqvultewm.supabase.co`
+## Cambio principal
+La primera versión dependía de CDN para Supabase JS y Chart.js.
+V2 utiliza:
+- JavaScript nativo;
+- REST API oficial de Supabase;
+- Auth API de Supabase;
+- gráfico SVG generado localmente.
 
-Usa solamente la publishable key del proyecto; la seguridad de datos está protegida por Row Level Security.
+Esto evita una pantalla vacía si un CDN externo falla.
 
-## Flujo
-1. Crear cuenta.
-2. Confirmar email.
-3. Ingresar.
-4. Completar ficha inicial.
-5. Semana 0 automática.
-6. Registrar peso con fecha editable.
-7. Ver evolución y tabla.
-8. Modificar meta/duración.
+## Para actualizar GitHub Pages
+Reemplazar/subir en la raíz:
+- index.html
+- app.js
+- styles.css
+- sw.js
+- manifest.webmanifest
+- icon.svg
+- .nojekyll
 
-## Supabase Auth antes de probar
-Una vez conozcas la URL pública:
-Authentication → URL Configuration
-- Site URL = URL pública exacta
-- Redirect URLs = misma URL pública (y opcionalmente `/**` durante pruebas)
+Luego esperar el check verde de `pages build and deployment`.
 
-Email/password está habilitado por defecto en proyectos hosted y la confirmación de email suele estar habilitada por defecto.
-
-## iPhone
-Safari → abrir URL → Compartir → Añadir a pantalla de inicio.
+## URL
+https://lsueyras.github.io/pesocare/
