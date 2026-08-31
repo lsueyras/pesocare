@@ -5,7 +5,9 @@
 const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
+const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
 const SESSION_KEY='pesocare_session_v2';
+const REMEMBER_KEY='pesocare_remember_me';
 
 const app=document.getElementById('app');
 let session=null, currentUser=null, profile=null, records=[];
@@ -45,14 +47,39 @@ async function jsonFetch(url,opts={}){
   return data;
 }
 
-function saveSession(s){
+function getRememberPreference(){
+  const saved=localStorage.getItem(REMEMBER_KEY);
+  return saved===null ? true : saved==='true';
+}
+
+function saveRememberPreference(value){
+  localStorage.setItem(REMEMBER_KEY,value?'true':'false');
+}
+
+function saveSession(s,remember=getRememberPreference()){
   session=s;
-  if(s) localStorage.setItem(SESSION_KEY,JSON.stringify(s));
-  else localStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(SESSION_KEY);
+  if(!s) return;
+  const target=remember ? localStorage : sessionStorage;
+  target.setItem(SESSION_KEY,JSON.stringify(s));
+}
+
+function clearStoredSession(){
+  localStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(SESSION_KEY);
 }
 
 function getStoredSession(){
-  try{return JSON.parse(localStorage.getItem(SESSION_KEY)||'null')}catch{return null}
+  try{
+    const persistent=localStorage.getItem(SESSION_KEY);
+    if(persistent) return JSON.parse(persistent);
+    const temporary=sessionStorage.getItem(SESSION_KEY);
+    if(temporary) return JSON.parse(temporary);
+    return null;
+  }catch{
+    return null;
+  }
 }
 
 function captureConfirmationHash(){
@@ -62,7 +89,7 @@ function captureConfirmationHash(){
   const refresh_token=p.get('refresh_token');
   const expires_in=Number(p.get('expires_in')||3600);
   if(access_token){
-    saveSession({access_token,refresh_token,expires_at:Date.now()+expires_in*1000});
+    saveSession({access_token,refresh_token,expires_at:Date.now()+expires_in*1000},getRememberPreference());
     history.replaceState(null,'',location.pathname+location.search);
     return true;
   }
@@ -81,7 +108,7 @@ async function refreshSession(){
       expires_at:Date.now()+Number(data.expires_in||3600)*1000
     });
     return true;
-  }catch{saveSession(null);return false}
+  }catch{clearStoredSession();session=null;return false}
 }
 
 async function ensureSession(){
@@ -100,7 +127,7 @@ async function ensureSession(){
         return true;
       }catch{}
     }
-    saveSession(null);currentUser=null;return false;
+    clearStoredSession();session=null;currentUser=null;return false;
   }
 }
 
@@ -122,19 +149,43 @@ async function dbUpdate(table,filter,obj){
   });
 }
 
+
+function brandBlock(subtitle='Seguimiento personal'){
+  return `<div class="brandrow brand-hero">
+    <img src="${BRAND_LOGO_URL}" alt="Logo PesoCare" class="brand-image" onerror="this.style.display='none'">
+    <div>
+      <div class="brand">PesoCare</div>
+      <div class="muted brand-subtitle">${esc(subtitle)}</div>
+    </div>
+  </div>`;
+}
+
 function loginView(message=''){
   app.innerHTML=shell(`
     <section class="card auth-card">
-      <div class="brandrow"><div class="logo">P</div><div><div class="brand">PesoCare</div><div class="muted">Seguimiento personal</div></div></div>
-      <p class="muted">Registra tu peso, revisa tu historial y monitorea tu evolución semanal.</p>
+      ${brandBlock('Seguimiento personal · Salud y progreso')}
+      <p class="muted">Registra tu peso, revisa tu historial, monitorea tu evolución semanal y comparte reportes con tu médico.</p>
       ${message?`<div class="notice success">${esc(message)}</div>`:''}
       <form id="authForm" style="margin-top:16px">
-        <label>Correo</label><input id="email" type="email" inputmode="email" autocomplete="email" required placeholder="tu@correo.com">
-        <label style="margin-top:10px">Contraseña</label><input id="password" type="password" autocomplete="current-password" minlength="6" required>
+        <label>Correo</label>
+        <input id="email" type="email" inputmode="email" autocomplete="email" required placeholder="tu@correo.com">
+
+        <label style="margin-top:10px">Contraseña</label>
+        <input id="password" type="password" autocomplete="current-password" minlength="6" required>
+
+        <label class="remember-row">
+          <input id="rememberMe" type="checkbox" ${getRememberPreference()?'checked':''}>
+          <span>
+            <strong>Recordarme en este dispositivo</strong>
+            <small>No guardamos tu contraseña.</small>
+          </span>
+        </label>
+
         <div class="actions" style="margin-top:14px">
           <button class="primary" type="submit">Ingresar</button>
           <button class="secondary" type="button" id="signup">Crear cuenta</button>
         </div>
+
         <div style="margin-top:12px"><button type="button" class="linkbtn" id="forgot">Olvidé mi contraseña</button></div>
         <p id="authMsg" class="error"></p>
       </form>
@@ -148,14 +199,24 @@ async function auth(e,signup){
   e.preventDefault();
   const email=document.getElementById('email').value.trim();
   const password=document.getElementById('password').value;
-  const msg=document.getElementById('authMsg');msg.textContent='';
+  const remember=document.getElementById('rememberMe')?.checked ?? true;
+  saveRememberPreference(remember);
+  const msg=document.getElementById('authMsg');
+  msg.textContent='';
+
   try{
     if(signup){
       const url=`${SUPABASE_URL}/auth/v1/signup?redirect_to=${encodeURIComponent(APP_URL)}`;
       const data=await jsonFetch(url,{method:'POST',headers:authHeaders(),body:JSON.stringify({email,password})});
       if(data.access_token){
-        saveSession({access_token:data.access_token,refresh_token:data.refresh_token,expires_at:Date.now()+Number(data.expires_in||3600)*1000});
-        await ensureSession();await loadData();render();
+        saveSession({
+          access_token:data.access_token,
+          refresh_token:data.refresh_token,
+          expires_at:Date.now()+Number(data.expires_in||3600)*1000
+        },remember);
+        await ensureSession();
+        await loadData();
+        render();
       }else{
         msg.textContent='Cuenta creada. Revisa tu correo y confirma el registro antes de ingresar.';
       }
@@ -163,8 +224,15 @@ async function auth(e,signup){
       const data=await jsonFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`,{
         method:'POST',headers:authHeaders(),body:JSON.stringify({email,password})
       });
-      saveSession({access_token:data.access_token,refresh_token:data.refresh_token,expires_at:Date.now()+Number(data.expires_in||3600)*1000});
-      if(await ensureSession()){await loadData();render()}
+      saveSession({
+        access_token:data.access_token,
+        refresh_token:data.refresh_token,
+        expires_at:Date.now()+Number(data.expires_in||3600)*1000
+      },remember);
+      if(await ensureSession()){
+        await loadData();
+        render();
+      }
     }
   }catch(err){
     const m=String(err.message||err);
@@ -198,7 +266,10 @@ function render(){profile?dashboardView():initialProfileView()}
 
 function header(){
   return `<div class="top">
-    <div class="brandrow"><div class="logo">P</div><div><div class="brand">PesoCare</div><div class="muted">${esc(currentUser?.email||'')}</div></div></div>
+    <div class="brandrow">
+      <img src="${BRAND_LOGO_URL}" alt="Logo PesoCare" class="brand-image brand-image-small" onerror="this.style.display='none'">
+      <div><div class="brand">PesoCare</div><div class="muted">${esc(currentUser?.email||'')}</div></div>
+    </div>
     <button class="secondary" id="logout">Salir</button>
   </div>`;
 }
@@ -310,7 +381,7 @@ function dashboardView(){
     <section class="card">
       <h2 class="section-title">Registrar peso</h2>
       <p class="muted">La fecha de hoy viene propuesta. Puedes cambiarla para registrar un dato anterior.</p>
-      <form id="weightForm"><div class="grid">
+      <form id="weightForm"><div class="record-grid">
         <div><label>Fecha</label><input id="date" type="date" value="${today()}" required></div>
         <div><label>Peso (kg)</label><input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 94,85" required></div>
         <div><label>Circunferencia abdominal (cm)</label><input id="abdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 111,50" required></div>
@@ -490,6 +561,8 @@ function buildPrintableReport(sorted){
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#182230;margin:0;background:#fff}
   .report{max-width:1120px;margin:0 auto}
   .head{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;border-bottom:2px solid #175cd3;padding-bottom:10px;margin-bottom:12px}
+  .head-left{display:flex;align-items:flex-start;gap:12px}
+  .report-logo{width:78px;height:auto;object-fit:contain;flex:0 0 auto}
   .brand{font-size:28px;font-weight:800;color:#175cd3}
   .sub{color:#667085;font-size:13px}
   .patient{margin-top:4px;font-size:18px;font-weight:700}
@@ -527,10 +600,13 @@ function buildPrintableReport(sorted){
   </div>
 
   <div class="head">
-    <div>
-      <div class="brand">PesoCare</div>
-      <div class="patient">${esc(profile.full_name)}</div>
-      <div class="sub">Inicio: ${fmt(profile.start_date)} · Seguimiento: ${profile.planned_weeks} semanas</div>
+    <div class="head-left">
+      <img src="${BRAND_LOGO_URL}" alt="Logo PesoCare" class="report-logo" onerror="this.style.display='none'">
+      <div>
+        <div class="brand">PesoCare</div>
+        <div class="patient">${esc(profile.full_name)}</div>
+        <div class="sub">Inicio: ${fmt(profile.start_date)} · Seguimiento: ${profile.planned_weeks} semanas</div>
+      </div>
     </div>
     <div class="sub">Reporte generado: ${esc(generatedAt)}</div>
   </div>
@@ -667,7 +743,7 @@ async function editPlan(){
 
 async function logout(){
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  saveSession(null);currentUser=null;profile=null;records=[];loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];loginView();
 }
 
 async function boot(){

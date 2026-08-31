@@ -60,3 +60,17 @@ https://lsueyras.github.io/pesocare/
   - historial completo.
 - En iPhone, `Generar PDF` abre un reporte imprimible. Desde `Guardar / compartir PDF`, Safari abre la vista de impresión desde la cual puede guardarse/compartirse como PDF.
 - Sin librerías JavaScript externas.
+
+
+## V7 — Logo en página principal y PDF + ajuste formulario de registro
+- Se agrega `brand-logo.png` en la pantalla inicial y en el encabezado.
+- El PDF ahora incorpora el logo de la marca.
+- El formulario `Registrar peso` usa una grilla específica (`record-grid`) para que Fecha, Peso y Circunferencia tengan ancho uniforme.
+- Caché actualizada a `pesocare-v7`.
+
+## V8 — Recordarme en este dispositivo
+- Opción visible, activada por defecto.
+- Nunca guarda la contraseña.
+- Activada: sesión persistente.
+- Desactivada: sesión termina al cerrar la pestaña/app.
+- Cerrar sesión elimina cualquier sesión almacenada.
