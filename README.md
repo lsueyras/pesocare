@@ -45,3 +45,18 @@ https://lsueyras.github.io/pesocare/
 - Historial incluye circunferencia abdominal.
 - Gráfico principal se mantiene como Peso vs Semana.
 - Usuarios antiguos pueden completar circunferencia inicial desde “Editar plan”.
+
+
+## V6 — Reporte PDF + segundo gráfico
+- Segundo gráfico: Circunferencia abdominal vs Semana.
+- Botón `Generar PDF`.
+- El reporte incluye:
+  - paciente;
+  - inicio y duración;
+  - peso inicial/actual/meta;
+  - cintura inicial/actual;
+  - gráfico de peso;
+  - gráfico de circunferencia abdominal;
+  - historial completo.
+- En iPhone, `Generar PDF` abre un reporte imprimible. Desde `Guardar / compartir PDF`, Safari abre la vista de impresión desde la cual puede guardarse/compartirse como PDF.
+- Sin librerías JavaScript externas.

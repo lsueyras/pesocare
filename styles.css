@@ -76,3 +76,24 @@ input[type="date"]::-webkit-date-and-time-value{
   text-align:left;
   min-width:0;
 }
+
+.chart-line-abdomen{
+  fill:none;
+  stroke:#7f56d9;
+  stroke-width:3;
+  stroke-linejoin:round;
+  stroke-linecap:round;
+}
+.chart-point-abdomen{
+  fill:#7f56d9;
+  stroke:white;
+  stroke-width:2;
+}
+.legend-dot.abdomen{
+  background:#7f56d9;
+}
+
+@media(max-width:520px){
+  .top .actions{width:100%}
+  .top .actions button{flex:1}
+}

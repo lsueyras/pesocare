@@ -293,7 +293,10 @@ function dashboardView(){
     <section class="card">
       <div class="top" style="margin-bottom:6px">
         <div><h2 class="section-title">Hola, ${esc(profile.full_name.split(' ')[0])}</h2><div class="muted">Seguimiento de ${profile.planned_weeks} semanas · Inicio ${fmt(profile.start_date)}</div></div>
-        <button id="editPlan" class="secondary">Editar plan</button>
+        <div class="actions">
+          <button id="reportBtn" class="primary">Generar PDF</button>
+          <button id="editPlan" class="secondary">Editar plan</button>
+        </div>
       </div><div class="progress"><div style="width:${progress}%"></div></div>
     </section>
     <section class="metrics">
@@ -319,42 +322,267 @@ function dashboardView(){
       <div id="chart" class="chart-wrap"></div>
     </section>
     <section class="card">
+      <h2 class="section-title">Circunferencia abdominal por semana</h2>
+      <div class="muted">Evolución en centímetros durante el seguimiento</div>
+      <div id="abdomenChart" class="chart-wrap"></div>
+    </section>
+    <section class="card">
       <h2 class="section-title">Historial</h2>
       <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circ. abdominal</th></tr></thead>
       <tbody>${sorted.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOf(r.measured_on)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table></div>
     </section>`);
   document.getElementById('weightForm').addEventListener('submit',addWeight);
+  document.getElementById('reportBtn').addEventListener('click',generateReport);
   document.getElementById('editPlan').addEventListener('click',editPlan);
   document.getElementById('logout').addEventListener('click',logout);
-  drawChart(sorted);
+  drawCharts(sorted);
 }
 
-function drawChart(sorted){
-  const el=document.getElementById('chart');if(!el)return;
+
+function getWeeklyLatest(sorted, field){
   const weekly=new Map();
-  sorted.forEach(r=>{const w=weekOf(r.measured_on);if(w<=profile.planned_weeks)weekly.set(w,Number(r.weight_kg))});
-  const points=[...weekly.entries()].sort((a,b)=>a[0]-b[0]);
-  if(!points.length){el.innerHTML='<div class="muted">Aún no hay datos.</div>';return}
-  const target=profile.target_weight_kg?Number(profile.target_weight_kg):null;
-  const vals=points.map(p=>p[1]).concat(target?[target]:[]);
+  sorted.forEach(r=>{
+    const w=weekOf(r.measured_on);
+    const raw=r[field];
+    if(w<=profile.planned_weeks && raw!==null && raw!==undefined && raw!==''){
+      weekly.set(w,Number(raw));
+    }
+  });
+  return [...weekly.entries()].sort((a,b)=>a[0]-b[0]);
+}
+
+function buildChartSvg(points, options={}){
+  if(!points.length) return '<div class="muted">Aún no hay datos suficientes.</div>';
+
+  const {
+    goal=null,
+    yLabel='',
+    valueSuffix='',
+    decimals=2,
+    lineClass='chart-line',
+    pointClass='chart-point',
+    goalClass='chart-goal',
+    ariaLabel='Gráfico'
+  }=options;
+
+  const vals=points.map(p=>p[1]).concat(goal!==null?[Number(goal)]:[]);
   let min=Math.min(...vals),max=Math.max(...vals);
-  if(max-min<4){min-=2;max+=2}else{const pad=(max-min)*.15;min-=pad;max+=pad}
-  const W=760,H=330,L=55,R=18,T=20,B=48,iw=W-L-R,ih=H-T-B;
+
+  if(max-min<4){
+    min-=2; max+=2;
+  }else{
+    const pad=(max-min)*0.15;
+    min-=pad; max+=pad;
+  }
+
+  const W=760,H=330,L=58,R=18,T=20,B=50,iw=W-L-R,ih=H-T-B;
   const x=w=>L+(w/Math.max(1,profile.planned_weeks))*iw;
   const y=v=>T+((max-v)/(max-min))*ih;
-  let svg=`<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico de evolución de peso">`;
+
+  let svg=`<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(ariaLabel)}">`;
+
   const yTicks=5;
-  for(let i=0;i<=yTicks;i++){const v=max-(max-min)*i/yTicks,yy=T+ih*i/yTicks;svg+=`<line class="chart-grid" x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}"/><text class="chart-label" x="${L-8}" y="${yy+4}" text-anchor="end">${v.toFixed(1)}</text>`}
+  for(let i=0;i<=yTicks;i++){
+    const v=max-(max-min)*i/yTicks;
+    const yy=T+ih*i/yTicks;
+    svg+=`<line class="chart-grid" x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}"/>`;
+    svg+=`<text class="chart-label" x="${L-8}" y="${yy+4}" text-anchor="end">${v.toFixed(decimals)}</text>`;
+  }
+
   const step=profile.planned_weeks<=16?2:profile.planned_weeks<=32?4:Math.ceil(profile.planned_weeks/8);
-  for(let w=0;w<=profile.planned_weeks;w+=step){const xx=x(w);svg+=`<line class="chart-grid" x1="${xx}" y1="${T}" x2="${xx}" y2="${T+ih}"/><text class="chart-label" x="${xx}" y="${H-22}" text-anchor="middle">${w}</text>`}
-  if(profile.planned_weeks%step!==0){svg+=`<text class="chart-label" x="${x(profile.planned_weeks)}" y="${H-22}" text-anchor="middle">${profile.planned_weeks}</text>`}
-  if(target)svg+=`<line class="chart-goal" x1="${L}" y1="${y(target)}" x2="${W-R}" y2="${y(target)}"/>`;
+  for(let w=0;w<=profile.planned_weeks;w+=step){
+    const xx=x(w);
+    svg+=`<line class="chart-grid" x1="${xx}" y1="${T}" x2="${xx}" y2="${T+ih}"/>`;
+    svg+=`<text class="chart-label" x="${xx}" y="${H-22}" text-anchor="middle">${w}</text>`;
+  }
+  if(profile.planned_weeks%step!==0){
+    svg+=`<text class="chart-label" x="${x(profile.planned_weeks)}" y="${H-22}" text-anchor="middle">${profile.planned_weeks}</text>`;
+  }
+
+  if(goal!==null){
+    svg+=`<line class="${goalClass}" x1="${L}" y1="${y(Number(goal))}" x2="${W-R}" y2="${y(Number(goal))}"/>`;
+  }
+
   const path=points.map(([w,v],i)=>`${i?'L':'M'} ${x(w).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
-  svg+=`<path class="chart-line" d="${path}"/>`;
-  points.forEach(([w,v])=>{svg+=`<circle class="chart-point" cx="${x(w)}" cy="${y(v)}" r="5"><title>Semana ${w}: ${v.toFixed(1)} kg</title></circle>`});
-  svg+=`<text class="chart-label" x="${L+iw/2}" y="${H-4}" text-anchor="middle">Semanas</text><text class="chart-label" transform="translate(14 ${T+ih/2}) rotate(-90)" text-anchor="middle">Peso (kg)</text></svg>`;
-  svg+=`<div class="legend"><span><i class="legend-dot"></i>Peso</span>${target?'<span><i class="legend-goal"></i>Meta</span>':''}</div>`;
-  el.innerHTML=svg;
+  svg+=`<path class="${lineClass}" d="${path}"/>`;
+
+  points.forEach(([w,v])=>{
+    svg+=`<circle class="${pointClass}" cx="${x(w)}" cy="${y(v)}" r="5"><title>Semana ${w}: ${v.toFixed(decimals)} ${valueSuffix}</title></circle>`;
+  });
+
+  svg+=`<text class="chart-label" x="${L+iw/2}" y="${H-4}" text-anchor="middle">Semanas</text>`;
+  svg+=`<text class="chart-label" transform="translate(14 ${T+ih/2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text>`;
+  svg+='</svg>';
+
+  return svg;
+}
+
+function drawCharts(sorted){
+  const weightPoints=getWeeklyLatest(sorted,'weight_kg');
+  const abdomenPoints=getWeeklyLatest(sorted,'abdominal_circumference_cm');
+
+  const weightEl=document.getElementById('chart');
+  if(weightEl){
+    weightEl.innerHTML=
+      buildChartSvg(weightPoints,{
+        goal:profile.target_weight_kg?Number(profile.target_weight_kg):null,
+        yLabel:'Peso (kg)',
+        valueSuffix:'kg',
+        decimals:2,
+        ariaLabel:'Gráfico de evolución de peso'
+      })+
+      `<div class="legend"><span><i class="legend-dot"></i>Peso</span>${profile.target_weight_kg?'<span><i class="legend-goal"></i>Meta</span>':''}</div>`;
+  }
+
+  const abdomenEl=document.getElementById('abdomenChart');
+  if(abdomenEl){
+    abdomenEl.innerHTML=
+      buildChartSvg(abdomenPoints,{
+        yLabel:'Circunferencia (cm)',
+        valueSuffix:'cm',
+        decimals:2,
+        lineClass:'chart-line-abdomen',
+        pointClass:'chart-point-abdomen',
+        ariaLabel:'Gráfico de evolución de circunferencia abdominal'
+      })+
+      `<div class="legend"><span><i class="legend-dot abdomen"></i>Circunferencia abdominal</span></div>`;
+  }
+}
+
+function buildPrintableReport(sorted){
+  const latest=sorted.at(-1);
+  const latestWithAbdomen=[...sorted].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined);
+  const currentAbdomen=latestWithAbdomen?Number(latestWithAbdomen.abdominal_circumference_cm):null;
+  const initialAbdomen=profile.initial_abdominal_circumference_cm!==null&&profile.initial_abdominal_circumference_cm!==undefined
+    ?Number(profile.initial_abdominal_circumference_cm):null;
+
+  const weightPoints=getWeeklyLatest(sorted,'weight_kg');
+  const abdomenPoints=getWeeklyLatest(sorted,'abdominal_circumference_cm');
+
+  const weightSvg=buildChartSvg(weightPoints,{
+    goal:profile.target_weight_kg?Number(profile.target_weight_kg):null,
+    yLabel:'Peso (kg)',
+    valueSuffix:'kg',
+    decimals:2,
+    ariaLabel:'Evolución de peso'
+  });
+
+  const abdomenSvg=buildChartSvg(abdomenPoints,{
+    yLabel:'Circunferencia (cm)',
+    valueSuffix:'cm',
+    decimals:2,
+    lineClass:'chart-line-abdomen',
+    pointClass:'chart-point-abdomen',
+    ariaLabel:'Evolución de circunferencia abdominal'
+  });
+
+  const generatedAt=new Date().toLocaleString('es-CL');
+
+  return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reporte PesoCare - ${esc(profile.full_name)}</title>
+<style>
+  @page{size:A4 landscape;margin:12mm}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#182230;margin:0;background:#fff}
+  .report{max-width:1120px;margin:0 auto}
+  .head{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;border-bottom:2px solid #175cd3;padding-bottom:10px;margin-bottom:12px}
+  .brand{font-size:28px;font-weight:800;color:#175cd3}
+  .sub{color:#667085;font-size:13px}
+  .patient{margin-top:4px;font-size:18px;font-weight:700}
+  .metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0}
+  .metric{border:1px solid #e4e7ec;border-radius:10px;padding:9px;text-align:center}
+  .metric span{display:block;color:#667085;font-size:11px}
+  .metric strong{display:block;font-size:16px;margin-top:2px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .box{border:1px solid #e4e7ec;border-radius:12px;padding:10px;break-inside:avoid}
+  .box h3{margin:0 0 5px;font-size:15px}
+  .chart-svg{width:100%;height:auto;display:block}
+  .chart-label{font-size:12px;fill:#667085}
+  .chart-grid{stroke:#eaecf0;stroke-width:1}
+  .chart-line{fill:none;stroke:#175cd3;stroke-width:3;stroke-linejoin:round;stroke-linecap:round}
+  .chart-point{fill:#175cd3;stroke:white;stroke-width:2}
+  .chart-goal{stroke:#039855;stroke-width:2;stroke-dasharray:7 6}
+  .chart-line-abdomen{fill:none;stroke:#7f56d9;stroke-width:3;stroke-linejoin:round;stroke-linecap:round}
+  .chart-point-abdomen{fill:#7f56d9;stroke:white;stroke-width:2}
+  table{width:100%;border-collapse:collapse;margin-top:10px;font-size:11px}
+  th,td{border-bottom:1px solid #eaecf0;padding:6px 5px;text-align:left}
+  th{color:#667085}
+  .footer{margin-top:10px;color:#98a2b3;font-size:10px;text-align:right}
+  .noprint{display:flex;gap:8px;margin:0 0 12px}
+  button{border:0;border-radius:9px;padding:10px 14px;font-weight:700;cursor:pointer}
+  .primary{background:#175cd3;color:#fff}
+  .secondary{background:#eef4ff;color:#175cd3}
+  @media print{.noprint{display:none}.report{max-width:none}}
+</style>
+</head>
+<body>
+<div class="report">
+  <div class="noprint">
+    <button class="primary" onclick="window.print()">Guardar / compartir PDF</button>
+    <button class="secondary" onclick="window.close()">Cerrar</button>
+  </div>
+
+  <div class="head">
+    <div>
+      <div class="brand">PesoCare</div>
+      <div class="patient">${esc(profile.full_name)}</div>
+      <div class="sub">Inicio: ${fmt(profile.start_date)} · Seguimiento: ${profile.planned_weeks} semanas</div>
+    </div>
+    <div class="sub">Reporte generado: ${esc(generatedAt)}</div>
+  </div>
+
+  <div class="metrics">
+    <div class="metric"><span>Peso inicial</span><strong>${kg(profile.initial_weight_kg)}</strong></div>
+    <div class="metric"><span>Peso actual</span><strong>${kg(latest.weight_kg)}</strong></div>
+    <div class="metric"><span>Peso meta</span><strong>${profile.target_weight_kg?kg(profile.target_weight_kg):'—'}</strong></div>
+    <div class="metric"><span>Cintura inicial</span><strong>${cm(initialAbdomen)}</strong></div>
+    <div class="metric"><span>Cintura actual</span><strong>${cm(currentAbdomen)}</strong></div>
+  </div>
+
+  <div class="grid2">
+    <div class="box">
+      <h3>Evolución de peso</h3>
+      ${weightSvg}
+    </div>
+    <div class="box">
+      <h3>Evolución de circunferencia abdominal</h3>
+      ${abdomenSvg}
+    </div>
+  </div>
+
+  <div class="box" style="margin-top:12px">
+    <h3>Historial de registros</h3>
+    <table>
+      <thead>
+        <tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circunferencia abdominal</th></tr>
+      </thead>
+      <tbody>
+        ${sorted.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOf(r.measured_on)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">PesoCare · Reporte personal de seguimiento</div>
+</div>
+</body>
+</html>`;
+}
+
+function generateReport(){
+  const sorted=[...records].sort((a,b)=>a.measured_on.localeCompare(b.measured_on)||String(a.created_at).localeCompare(String(b.created_at)));
+  const reportHtml=buildPrintableReport(sorted);
+  const win=window.open('','_blank');
+  if(!win){
+    alert('Safari bloqueó la apertura del reporte. Permite ventanas emergentes para este sitio e inténtalo nuevamente.');
+    return;
+  }
+  win.document.open();
+  win.document.write(reportHtml);
+  win.document.close();
 }
 
 async function addWeight(e){
