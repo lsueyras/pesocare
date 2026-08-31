@@ -13,7 +13,13 @@ let session=null, currentUser=null, profile=null, records=[];
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const parseDate=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(Date.UTC(y,m-1,d))};
 const fmt=s=>{if(!s)return '—';const[y,m,d]=s.split('-');return `${d}/${m}/${y}`};
-const kg=n=>Number(n).toLocaleString('es-CL',{minimumFractionDigits:1,maximumFractionDigits:1})+' kg';
+const parseDecimal=value=>{
+  const normalized=String(value??'').trim().replace(/\s/g,'').replace(',','.');
+  if(!/^\d+(\.\d{{1,2}})?$/.test(normalized)) return NaN;
+  return Number(normalized);
+};
+const kg=n=>Number(n).toLocaleString('es-CL',{minimumFractionDigits:1,maximumFractionDigits:2})+' kg';
+const cm=n=>n===null||n===undefined||n===''?'—':Number(n).toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})+' cm';
 const weekOf=date=>profile?Math.max(0,Math.floor((parseDate(date)-parseDate(profile.start_date))/(7*86400000))):0;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -208,8 +214,9 @@ function initialProfileView(){
           <div><label>Fecha de nacimiento</label><input id="birth" type="date"></div>
           <div><label>Fecha de inicio</label><input id="start" type="date" value="${today()}" required></div>
           <div><label>Duración del seguimiento (semanas)</label><input id="weeks" type="number" min="1" max="104" value="16" required></div>
-          <div><label>Peso inicial (kg)</label><input id="initial" type="number" inputmode="decimal" min="20" max="350" step="0.1" required></div>
-          <div><label>Peso meta (kg)</label><input id="target" type="number" inputmode="decimal" min="20" max="350" step="0.1"></div>
+          <div><label>Peso inicial (kg)</label><input id="initial" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 82,45" required></div>
+          <div><label>Peso meta (kg)</label><input id="target" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 70,00"></div>
+          <div><label>Circunferencia abdominal inicial (cm)</label><input id="initialAbdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 102,35" required></div>
         </div>
         <button class="primary" style="margin-top:14px">Crear seguimiento</button>
         <p id="profileMsg" class="error"></p>
@@ -244,6 +251,10 @@ function dashboardView(){
   if(!latest){app.innerHTML=shell(`${header()}<section class="card"><div class="error">No se encontró el registro inicial.</div></section>`);return}
   const change=Number(latest.weight_kg)-Number(profile.initial_weight_kg);
   const goal=profile.target_weight_kg?Number(profile.target_weight_kg):null;
+  const latestWithAbdomen=[...sorted].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined);
+  const currentAbdomen=latestWithAbdomen?Number(latestWithAbdomen.abdominal_circumference_cm):null;
+  const initialAbdomen=profile.initial_abdominal_circumference_cm!==null&&profile.initial_abdominal_circumference_cm!==undefined?Number(profile.initial_abdominal_circumference_cm):null;
+  const abdomenChange=currentAbdomen!==null&&initialAbdomen!==null?currentAbdomen-initialAbdomen:null;
   const currentWeek=weekOf(latest.measured_on);
   const progress=Math.min(100,Math.max(0,(currentWeek/Math.max(1,profile.planned_weeks))*100));
   app.innerHTML=shell(`${header()}

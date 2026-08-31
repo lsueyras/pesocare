@@ -26,3 +26,22 @@ Luego esperar el check verde de `pages build and deployment`.
 
 ## URL
 https://lsueyras.github.io/pesocare/
+
+
+## V3 Mobile Fix
+- Formularios pasan a una sola columna bajo 600 px.
+- Corrección específica para `input type=date` en Safari/iPhone.
+- Inputs con `min-width:0`, `max-width:100%` y `font-size:16px`.
+- Caché PWA actualizada a `pesocare-v3`.
+- `styles.css?v=3` y `app.js?v=3` para evitar caché antigua.
+
+
+## V4 — Decimales + circunferencia abdominal
+- Peso acepta coma o punto y hasta 2 decimales.
+- Peso inicial/meta y registros almacenan 2 decimales.
+- Circunferencia abdominal inicial en cm, hasta 2 decimales.
+- Cada nuevo control registra peso + circunferencia abdominal.
+- Dashboard muestra cintura actual y cambio desde el inicio.
+- Historial incluye circunferencia abdominal.
+- Gráfico principal se mantiene como Peso vs Semana.
+- Usuarios antiguos pueden completar circunferencia inicial desde “Editar plan”.
