@@ -269,3 +269,16 @@ https://lsueyras.github.io/pesocare/
 - Selección de fecha actualiza el campo en DD/MM/AAAA.
 - En iPhone se presenta como panel inferior para mejor experiencia táctil.
 - Se mantiene almacenamiento interno ISO YYYY-MM-DD.
+
+
+## BodyCare V15 — Notificaciones Push
+- Web Push para mensajes, indicaciones médicas, seguimiento y soporte.
+- Funciona en desktop y en PWA compatibles.
+- En iPhone/iPad requiere instalar BodyCare en pantalla de inicio y abrirlo desde allí.
+- Suscripción por dispositivo; no se guarda información clínica en el payload push.
+- Preferencias independientes por categoría.
+- Botón de prueba desde el centro de notificaciones.
+- Deep links desde push hacia conversación, indicaciones o paciente.
+- Realtime se mantiene como canal principal mientras la app está abierta.
+- Push se dispara desde Supabase de forma asíncrona mediante pg_net + Edge Function.
+- VAPID private key y webhook token permanecen en Supabase Vault; solo la clave pública está en frontend.

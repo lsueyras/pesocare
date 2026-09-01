@@ -688,3 +688,86 @@ input[data-date-cl].date-invalid{
     font-size:.95rem;
   }
 }
+
+/* BodyCare V15 — Web Push */
+.push-settings-card{
+  margin:10px 14px 12px;
+  padding:12px;
+  border:1px solid #d0d5dd;
+  border-radius:14px;
+  background:#f9fafb;
+}
+.push-settings-head{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:center;
+}
+.push-settings-head>div{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.push-settings-head small{color:#667085}
+.push-status-chip{
+  display:inline-flex;
+  align-items:center;
+  min-height:25px;
+  padding:3px 8px;
+  border-radius:999px;
+  background:#eef4ff;
+  color:#3538cd;
+  font-size:.7rem;
+  font-weight:750;
+}
+.push-settings-content{margin-top:10px}
+.push-settings-state{
+  display:flex;
+  gap:8px;
+  align-items:flex-start;
+  color:#475467;
+  font-size:.8rem;
+  line-height:1.35;
+}
+.push-settings-state.unsupported{
+  padding:9px;
+  border-radius:10px;
+  background:#fffaeb;
+  color:#93370d;
+}
+.push-state-dot{
+  width:9px;height:9px;border-radius:50%;margin-top:4px;flex:0 0 auto;
+  background:#98a2b3;
+}
+.push-settings-state.enabled .push-state-dot{background:#12b76a}
+.push-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:10px;
+}
+.push-preferences{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:7px 10px;
+  margin-top:12px;
+  padding-top:10px;
+  border-top:1px solid #eaecf0;
+}
+.push-preferences label{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  margin:0;
+  font-size:.78rem;
+  color:#344054;
+}
+.push-preferences input{
+  width:16px;
+  height:16px;
+  margin:0;
+}
+@media(max-width:520px){
+  .push-preferences{grid-template-columns:1fr}
+  .push-actions button{flex:1 1 auto}
+}

@@ -6,7 +6,8 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='14.11';
+const APP_VERSION='15.0';
+const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
@@ -31,6 +32,11 @@ let patientMessagesSyncing=false, patientMessagesSyncPending=false;
 let patientPrescriptionsSyncing=false, patientPrescriptionsSyncPending=false;
 let doctorMessagesSyncing=false, doctorMessagesSyncPending=false;
 let doctorPrescriptionsSyncing=false, doctorPrescriptionsSyncPending=false;
+let notificationPreferences={push_enabled:true,messages:true,prescriptions:true,care_updates:true,support:true};
+let pushBrowserSubscription=null;
+let pushSettingsLoaded=false;
+let launchNotificationId=new URLSearchParams(location.search).get('notification');
+
 
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const parseDate=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(Date.UTC(y,m-1,d))};
@@ -882,6 +888,265 @@ function unreadCount(){
   return notifications.filter(n=>!n.read_at).length;
 }
 
+
+function base64UrlToUint8Array(value){
+  const padding='='.repeat((4-value.length%4)%4);
+  const base64=(value+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(base64);
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+
+function isIOSDevice(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+}
+
+function isStandaloneApp(){
+  return window.matchMedia?.('(display-mode: standalone)').matches ||
+    window.navigator.standalone===true;
+}
+
+function pushSupportInfo(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)){
+    return {supported:false,reason:'Este navegador no admite notificaciones push.'};
+  }
+  if(isIOSDevice()&&!isStandaloneApp()){
+    return {
+      supported:false,
+      reason:'En iPhone/iPad, instala BodyCare en la pantalla de inicio y ábrelo desde ese ícono para activar notificaciones push.'
+    };
+  }
+  return {supported:true,reason:''};
+}
+
+async function loadPushSettings(){
+  if(!currentUser?.id||!session?.access_token)return;
+  try{
+    const [prefs]=await Promise.all([
+      dbGet(`notification_preferences?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&limit=1`)
+    ]);
+    if(prefs?.[0]){
+      notificationPreferences={
+        push_enabled:prefs[0].push_enabled!==false,
+        messages:prefs[0].messages!==false,
+        prescriptions:prefs[0].prescriptions!==false,
+        care_updates:prefs[0].care_updates!==false,
+        support:prefs[0].support!==false
+      };
+    }
+    if('serviceWorker' in navigator){
+      const reg=await navigator.serviceWorker.ready;
+      pushBrowserSubscription=await reg.pushManager.getSubscription();
+    }
+  }catch(err){
+    console.warn('Push settings unavailable',err);
+  }finally{
+    pushSettingsLoaded=true;
+    renderPushSettings();
+  }
+}
+
+function pushStatusLabel(){
+  const support=pushSupportInfo();
+  if(!support.supported)return 'No disponible';
+  if(Notification.permission==='denied')return 'Bloqueadas';
+  if(pushBrowserSubscription&&notificationPreferences.push_enabled)return 'Activas';
+  return 'Desactivadas';
+}
+
+function pushSettingsMarkup(){
+  const support=pushSupportInfo();
+  const permission=('Notification' in window)?Notification.permission:'default';
+  const active=!!pushBrowserSubscription && notificationPreferences.push_enabled;
+
+  if(!support.supported){
+    return `<div class="push-settings-content">
+      <div class="push-settings-state unsupported">${esc(support.reason)}</div>
+    </div>`;
+  }
+
+  if(permission==='denied'){
+    return `<div class="push-settings-content">
+      <div class="push-settings-state unsupported">Las notificaciones están bloqueadas en el navegador. Debes habilitarlas desde los ajustes del dispositivo/navegador.</div>
+    </div>`;
+  }
+
+  return `<div class="push-settings-content">
+    <div class="push-settings-state ${active?'enabled':'disabled'}">
+      <span class="push-state-dot"></span>
+      <span>${active?'Este dispositivo recibirá avisos aunque BodyCare no esté abierto.':'Activa los avisos para recibir mensajes e indicaciones fuera de la aplicación.'}</span>
+    </div>
+
+    <div class="push-actions">
+      <button type="button" class="${active?'secondary':'primary'} small-btn" id="${active?'disablePushBtn':'enablePushBtn'}">
+        ${active?'Desactivar en este dispositivo':'Activar en este dispositivo'}
+      </button>
+      ${active?'<button type="button" class="secondary small-btn" id="testPushBtn">Enviar prueba</button>':''}
+    </div>
+
+    <div class="push-preferences">
+      <label><input type="checkbox" id="pushPrefMessages" ${notificationPreferences.messages?'checked':''}> <span>Mensajes</span></label>
+      <label><input type="checkbox" id="pushPrefPrescriptions" ${notificationPreferences.prescriptions?'checked':''}> <span>Indicaciones médicas</span></label>
+      <label><input type="checkbox" id="pushPrefCare" ${notificationPreferences.care_updates?'checked':''}> <span>Actualizaciones de seguimiento</span></label>
+      <label><input type="checkbox" id="pushPrefSupport" ${notificationPreferences.support?'checked':''}> <span>Soporte y administración</span></label>
+    </div>
+  </div>`;
+}
+
+function renderPushSettings(){
+  const body=document.getElementById('pushSettingsBody');
+  const status=document.getElementById('pushSettingsStatus');
+  if(status)status.textContent=pushSettingsLoaded?pushStatusLabel():'Cargando…';
+  if(!body)return;
+  body.innerHTML=pushSettingsLoaded?pushSettingsMarkup():'<div class="muted">Cargando configuración…</div>';
+  bindPushSettingsEvents();
+}
+
+async function persistPushPreferences(pushEnabled=notificationPreferences.push_enabled){
+  const messages=document.getElementById('pushPrefMessages')?.checked ?? notificationPreferences.messages;
+  const prescriptions=document.getElementById('pushPrefPrescriptions')?.checked ?? notificationPreferences.prescriptions;
+  const care=document.getElementById('pushPrefCare')?.checked ?? notificationPreferences.care_updates;
+  const support=document.getElementById('pushPrefSupport')?.checked ?? notificationPreferences.support;
+
+  const rows=await dbRpc('bodycare_save_notification_preferences',{
+    p_push_enabled:pushEnabled,
+    p_messages:messages,
+    p_prescriptions:prescriptions,
+    p_care_updates:care,
+    p_support:support
+  });
+
+  const saved=Array.isArray(rows)?rows[0]:rows;
+  if(saved){
+    notificationPreferences={
+      push_enabled:saved.push_enabled!==false,
+      messages:saved.messages!==false,
+      prescriptions:saved.prescriptions!==false,
+      care_updates:saved.care_updates!==false,
+      support:saved.support!==false
+    };
+  }
+}
+
+async function enablePushNotifications(){
+  const support=pushSupportInfo();
+  if(!support.supported){
+    alert(support.reason);
+    return;
+  }
+
+  try{
+    const permission=await Notification.requestPermission();
+    if(permission!=='granted'){
+      renderPushSettings();
+      return;
+    }
+
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+
+    if(!sub){
+      sub=await reg.pushManager.subscribe({
+        userVisibleOnly:true,
+        applicationServerKey:base64UrlToUint8Array(VAPID_PUBLIC_KEY)
+      });
+    }
+
+    const json=sub.toJSON();
+    if(!json?.keys?.p256dh||!json?.keys?.auth)throw new Error('El navegador no entregó las claves de la suscripción.');
+
+    await dbRpc('bodycare_register_push_subscription',{
+      p_endpoint:sub.endpoint,
+      p_p256dh:json.keys.p256dh,
+      p_auth:json.keys.auth,
+      p_user_agent:navigator.userAgent
+    });
+
+    pushBrowserSubscription=sub;
+    notificationPreferences.push_enabled=true;
+    await persistPushPreferences(true);
+    pushSettingsLoaded=true;
+    renderPushSettings();
+    showToast('Notificaciones activadas','BodyCare puede avisarte aunque la aplicación no esté abierta.','PUSH_TEST');
+  }catch(err){
+    console.error('Enable push error',err);
+    alert('No fue posible activar las notificaciones: '+err.message);
+  }
+}
+
+async function disablePushNotifications(){
+  if(!confirm('¿Desactivar las notificaciones push en este dispositivo?'))return;
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.getSubscription();
+    if(sub){
+      await dbRpc('bodycare_remove_push_subscription',{p_endpoint:sub.endpoint});
+      await sub.unsubscribe();
+    }
+    pushBrowserSubscription=null;
+    await persistPushPreferences(false);
+    notificationPreferences.push_enabled=false;
+    renderPushSettings();
+  }catch(err){
+    alert('No fue posible desactivar las notificaciones: '+err.message);
+  }
+}
+
+async function sendPushTest(){
+  const btn=document.getElementById('testPushBtn');
+  if(btn)btn.disabled=true;
+  try{
+    await dbRpc('bodycare_send_push_test',{});
+    showToast('Prueba enviada','Deberías recibir una notificación push en este dispositivo.','PUSH_TEST');
+  }catch(err){
+    alert('No fue posible enviar la prueba: '+err.message);
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+
+function bindPushSettingsEvents(){
+  document.getElementById('enablePushBtn')?.addEventListener('click',enablePushNotifications);
+  document.getElementById('disablePushBtn')?.addEventListener('click',disablePushNotifications);
+  document.getElementById('testPushBtn')?.addEventListener('click',sendPushTest);
+  ['pushPrefMessages','pushPrefPrescriptions','pushPrefCare','pushPrefSupport'].forEach(id=>{
+    document.getElementById(id)?.addEventListener('change',async()=>{
+      try{
+        await persistPushPreferences(notificationPreferences.push_enabled);
+        renderPushSettings();
+      }catch(err){
+        alert('No fue posible guardar la preferencia: '+err.message);
+      }
+    });
+  });
+}
+
+async function handleLaunchNotification(){
+  if(!launchNotificationId||!currentUser?.id)return;
+  const id=launchNotificationId;
+  launchNotificationId=null;
+
+  try{
+    const clean=new URL(location.href);
+    clean.searchParams.delete('notification');
+    clean.searchParams.delete('type');
+    history.replaceState(null,'',clean.pathname+clean.search+clean.hash);
+  }catch{}
+
+  let n=notifications.find(x=>x.id===id);
+  if(!n){
+    try{
+      const rows=await dbGet(`user_notifications?select=*&id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(currentUser.id)}&limit=1`);
+      n=rows?.[0]||null;
+      if(n&&!notifications.some(x=>x.id===n.id))notifications.unshift(n);
+    }catch{}
+  }
+
+  if(n){
+    setTimeout(()=>openNotificationById(id),120);
+  }
+}
+
 function notificationIcon(type){
   const icons={
     NEW_MESSAGE:'💬',
@@ -892,7 +1157,8 @@ function notificationIcon(type){
     PRESCRIPTION_REMOVED:'🗑️',
     NEW_WEIGHT:'⚖️',
     NEW_PATIENT:'👤',
-    SUPPORT:'🛠️'
+    SUPPORT:'🛠️',
+    PUSH_TEST:'🔔'
   };
   return icons[type]||'🔔';
 }
@@ -981,7 +1247,8 @@ function notificationDestinationLabel(n){
     PRESCRIPTION_REMOVED:'Abrir seguimiento',
     NEW_WEIGHT:'Abrir paciente',
     NEW_PATIENT:'Ver pacientes',
-    SUPPORT:'Abrir soporte'
+    SUPPORT:'Abrir soporte',
+    PUSH_TEST:'Abrir BodyCare'
   };
   return map[n.type]||'Abrir';
 }
@@ -1001,6 +1268,13 @@ function notificationCenterMarkup(){
         <span class="realtime-pill"><i class="live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}"></i>${realtimeStatus==='live'?'Actualización en vivo':'Reconectando'}</span>
         <button class="linkbtn" id="markAllRead">Marcar todas como leídas</button>
       </div>
+      <section class="push-settings-card">
+        <div class="push-settings-head">
+          <div><strong>Notificaciones push</strong><small>Avisos fuera de BodyCare</small></div>
+          <span class="push-status-chip" id="pushSettingsStatus">${pushSettingsLoaded?pushStatusLabel():'Cargando…'}</span>
+        </div>
+        <div id="pushSettingsBody">${pushSettingsLoaded?pushSettingsMarkup():'<div class="muted">Cargando configuración…</div>'}</div>
+      </section>
       <div id="notificationList" class="notification-list">
         ${list.length?list.map(notificationItemMarkup).join(''):'<div class="empty-state notification-empty">No tienes notificaciones.</div>'}
       </div>
@@ -1040,6 +1314,9 @@ function showNotificationCenter(){
   });
   document.getElementById('markAllRead')?.addEventListener('click',markAllNotificationsRead);
   renderNotificationList();
+  pushSettingsLoaded=false;
+  renderPushSettings();
+  loadPushSettings();
 }
 
 async function openNotificationById(id){
@@ -1057,7 +1334,10 @@ async function openNotificationById(id){
     }
     if(hasRole('PATIENT')){
       activePortal='PATIENT';
+      activePatientTab='DOCTOR';
       localStorage.setItem('pesocare_active_portal','PATIENT');
+      localStorage.setItem('pesocare_patient_tab','DOCTOR');
+      if(n.related_user_id)localStorage.setItem('pesocare_selected_doctor',n.related_user_id);
       await loadData();
       render();
       setTimeout(()=>document.getElementById('patientMessageText')?.scrollIntoView({behavior:'smooth',block:'center'}),120);
@@ -1067,8 +1347,12 @@ async function openNotificationById(id){
 
   if(['NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'].includes(n.type) && hasRole('PATIENT')){
     activePortal='PATIENT';
+    activePatientTab='DOCTOR';
     localStorage.setItem('pesocare_active_portal','PATIENT');
+    localStorage.setItem('pesocare_patient_tab','DOCTOR');
+    if(n.related_user_id)localStorage.setItem('pesocare_selected_doctor',n.related_user_id);
     await loadData();render();
+    setTimeout(()=>document.getElementById('patientPrescriptionList')?.scrollIntoView({behavior:'smooth',block:'center'}),120);
     return;
   }
 
@@ -1089,6 +1373,11 @@ async function openNotificationById(id){
     localStorage.setItem('pesocare_active_portal','ADMIN');
     adminLoaded=false;
     render();
+    return;
+  }
+
+  if(n.type==='PUSH_TEST'){
+    await loadData();render();
     return;
   }
 
@@ -2196,7 +2485,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.11'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -3200,8 +3489,12 @@ async function logout(){
 async function boot(){
   try{
     const confirmed=captureConfirmationHash();
-    if(await ensureSession()){await loadData();render();startRealtime()}
-    else loginView(confirmed?'Correo confirmado. Ya puedes ingresar.':'');
+    if(await ensureSession()){
+      await loadData();
+      render();
+      startRealtime();
+      await handleLaunchNotification();
+    } else loginView(confirmed?'Correo confirmado. Ya puedes ingresar.':'');
   }catch(err){
     console.error(err);
     loginView();
