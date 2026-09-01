@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='16.4';
+const APP_VERSION='16.5';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -2305,17 +2305,36 @@ function dashboardView(){
     <section class="card"><h2 class="section-title">Circunferencia abdominal por semana</h2><div class="muted">Evolución en centímetros durante el seguimiento</div><div id="abdomenChart" class="chart-wrap"></div></section>
     <section class="card">
       <h2 class="section-title">Historial</h2>
-      <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circ. abdominal</th><th>Acciones</th></tr></thead>
-      <tbody>${sorted.map(r=>`<tr>
-        <td>${fmt(r.measured_on)}${r.is_initial?' <span class="initial-record-chip">Inicial</span>':''}</td>
-        <td>${weekOf(r.measured_on)}</td>
-        <td>${kg(r.weight_kg)}</td>
-        <td>${cm(r.abdominal_circumference_cm)}</td>
-        <td><div class="record-actions">
-          <button type="button" class="secondary small-btn" data-edit-weight="${r.id}">Editar</button>
-          ${r.is_initial?'':`<button type="button" class="secondary small-btn danger-outline" data-delete-weight="${r.id}">Eliminar</button>`}
-        </div></td>
-      </tr>`).join('')}</tbody></table></div>
+      <div class="table-wrap history-table-wrap"><table class="history-table">
+        <colgroup>
+          <col class="history-col-date">
+          <col class="history-col-week">
+          <col class="history-col-weight">
+          <col class="history-col-waist">
+          <col class="history-col-actions">
+        </colgroup>
+        <thead><tr>
+          <th>Fecha</th>
+          <th><span class="history-head-desktop">Semana</span><span class="history-head-mobile">Sem.</span></th>
+          <th>Peso</th>
+          <th><span class="history-head-desktop">Circ. abdominal</span><span class="history-head-mobile">Cint.</span></th>
+          <th><span class="history-head-desktop">Acciones</span><span class="history-head-mobile">Acc.</span></th>
+        </tr></thead>
+        <tbody>${sorted.map(r=>`<tr>
+          <td class="history-date-cell">${fmt(r.measured_on)}${r.is_initial?' <span class="initial-record-chip"><span class="initial-label-desktop">Inicial</span><span class="initial-label-mobile">I</span></span>':''}</td>
+          <td class="history-week-cell">${weekOf(r.measured_on)}</td>
+          <td class="history-number-cell">${kg(r.weight_kg)}</td>
+          <td class="history-number-cell">${cm(r.abdominal_circumference_cm)}</td>
+          <td class="history-actions-cell"><div class="record-actions">
+            <button type="button" class="secondary small-btn record-action-btn" data-edit-weight="${r.id}" aria-label="Editar registro del ${fmt(r.measured_on)}" title="Editar">
+              <span class="record-action-icon" aria-hidden="true">✎</span><span class="record-action-label">Editar</span>
+            </button>
+            ${r.is_initial?'':`<button type="button" class="secondary small-btn danger-outline record-action-btn" data-delete-weight="${r.id}" aria-label="Eliminar registro del ${fmt(r.measured_on)}" title="Eliminar">
+              <span class="record-action-icon record-delete-icon" aria-hidden="true">×</span><span class="record-action-label">Eliminar</span>
+            </button>`}
+          </div></td>
+        </tr>`).join('')}</tbody>
+      </table></div>
     </section>`);
 
   document.getElementById('weightForm').addEventListener('submit',saveWeightRecord);
@@ -3310,7 +3329,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.4'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.5'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();

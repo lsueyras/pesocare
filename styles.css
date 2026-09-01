@@ -1502,3 +1502,156 @@ input[data-date-cl].date-invalid{
     width:100%;
   }
 }
+
+/* BodyCare V16.5 — historial adaptado a iPhone sin desplazamiento horizontal */
+.history-table{
+  width:100%;
+}
+.history-head-mobile,
+.initial-label-mobile,
+.record-action-icon{
+  display:none;
+}
+
+@media(max-width:600px){
+  .history-table-wrap{
+    width:100%;
+    max-width:100%;
+    overflow-x:hidden !important;
+    overflow-y:visible;
+  }
+
+  .history-table{
+    width:100% !important;
+    min-width:0 !important;
+    max-width:100% !important;
+    table-layout:fixed;
+    border-collapse:collapse;
+  }
+
+  .history-table .history-col-date{width:29%}
+  .history-table .history-col-week{width:10%}
+  .history-table .history-col-weight{width:18%}
+  .history-table .history-col-waist{width:23%}
+  .history-table .history-col-actions{width:20%}
+
+  .history-table th,
+  .history-table td{
+    padding:8px 2px !important;
+    min-width:0;
+    max-width:none;
+    overflow:hidden;
+    text-overflow:clip;
+    white-space:nowrap;
+    font-size:11px !important;
+    line-height:1.2;
+    vertical-align:middle;
+  }
+
+  .history-table th{
+    font-size:10px !important;
+    letter-spacing:-.01em;
+  }
+
+  .history-table th:nth-child(2),
+  .history-table td:nth-child(2){
+    text-align:center;
+  }
+
+  .history-table th:nth-child(3),
+  .history-table th:nth-child(4),
+  .history-table td:nth-child(3),
+  .history-table td:nth-child(4){
+    text-align:right;
+  }
+
+  .history-head-desktop,
+  .initial-label-desktop,
+  .record-action-label{
+    display:none !important;
+  }
+
+  .history-head-mobile,
+  .initial-label-mobile,
+  .record-action-icon{
+    display:inline !important;
+  }
+
+  .history-date-cell{
+    letter-spacing:-.02em;
+  }
+
+  .initial-record-chip{
+    margin-left:2px !important;
+    padding:1px 4px !important;
+    min-width:16px;
+    justify-content:center;
+    font-size:9px !important;
+    line-height:1.2;
+  }
+
+  .history-number-cell{
+    font-variant-numeric:tabular-nums;
+    letter-spacing:-.025em;
+  }
+
+  .history-actions-cell{
+    overflow:visible !important;
+  }
+
+  .record-actions{
+    display:flex !important;
+    flex-direction:row !important;
+    flex-wrap:nowrap !important;
+    justify-content:flex-end;
+    align-items:center;
+    gap:3px !important;
+    min-width:0 !important;
+    width:100%;
+  }
+
+  .record-actions .record-action-btn{
+    display:inline-grid !important;
+    place-items:center;
+    flex:0 0 27px !important;
+    width:27px !important;
+    min-width:27px !important;
+    max-width:27px !important;
+    height:27px !important;
+    min-height:27px !important;
+    padding:0 !important;
+    margin:0 !important;
+    border-radius:7px !important;
+    font-size:16px !important;
+    line-height:1 !important;
+  }
+
+  .record-action-icon{
+    line-height:1;
+    font-size:16px;
+    font-weight:700;
+  }
+
+  .record-delete-icon{
+    font-size:20px;
+    font-weight:500;
+    transform:translateY(-1px);
+  }
+}
+
+@media(max-width:390px){
+  .history-table th,
+  .history-table td{
+    font-size:10px !important;
+    padding-left:1px !important;
+    padding-right:1px !important;
+  }
+  .history-table th{
+    font-size:9px !important;
+  }
+  .history-table .history-col-date{width:30%}
+  .history-table .history-col-week{width:9%}
+  .history-table .history-col-weight{width:18%}
+  .history-table .history-col-waist{width:23%}
+  .history-table .history-col-actions{width:20%}
+}
