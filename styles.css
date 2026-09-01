@@ -1464,3 +1464,41 @@ input[data-date-cl].date-invalid{
     font-size:1rem;
   }
 }
+
+/* BodyCare V16.4 — edición de registros */
+.record-actions{
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.initial-record-chip{
+  display:inline-flex;
+  margin-left:5px;
+  padding:2px 6px;
+  border-radius:999px;
+  background:#eef4ff;
+  color:#3538cd;
+  font-size:.64rem;
+  font-weight:750;
+  vertical-align:middle;
+}
+.danger-outline{
+  color:#b42318 !important;
+  border-color:#fecdca !important;
+}
+.danger-outline:hover{
+  background:#fef3f2 !important;
+}
+#weightEntryCard input[readonly]{
+  background:#f9fafb !important;
+  color:#667085 !important;
+}
+@media(max-width:600px){
+  .record-actions{
+    flex-direction:column;
+    min-width:100px;
+  }
+  .record-actions button{
+    width:100%;
+  }
+}

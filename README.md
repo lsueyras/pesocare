@@ -394,3 +394,19 @@ https://lsueyras.github.io/pesocare/
   - controles médico/paciente;
   - fecha de inicio de prescripción;
   - configuración inicial del seguimiento.
+
+
+## BodyCare V16.4 — Registros transaccionales, edición y eliminación
+- Nuevo registro usa RPC `bodycare_save_weight_record`.
+- El registro devuelto por Supabase se incorpora inmediatamente al estado local.
+- Peso actual, cambio de peso, cintura, cambio de cintura, gráficos e historial se actualizan sin `loadData()`.
+- Historial incorpora Editar y Eliminar.
+- Registro inicial:
+  - se puede editar peso/cintura;
+  - no se puede cambiar su fecha desde el historial;
+  - no se puede eliminar.
+- Registros posteriores:
+  - fecha, peso y cintura editables;
+  - eliminación lógica con auditoría.
+- Los registros eliminados dejan de participar en métricas, gráficos, historial y priorización médica.
+- Médico recibe NEW_WEIGHT / WEIGHT_UPDATED / WEIGHT_REMOVED por Realtime + Push.

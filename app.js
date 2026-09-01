@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='16.3';
+const APP_VERSION='16.4';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -21,6 +21,7 @@ let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
 let doctorPriorities=[], doctorAlertSettings=null;
 let adminUsers=[], adminTickets=[], adminLoaded=false;
 let editingPrescriptionId=null;
+let editingWeightRecordId=null;
 let notifications=[];
 let realtimeSocket=null, realtimeHeartbeat=null, realtimeReconnectTimer=null;
 let realtimeAttempts=0, realtimeRef=0, realtimeJoinRef=null, realtimeTopic=null;
@@ -1295,7 +1296,9 @@ function notificationIcon(type){
     PUSH_TEST:'🔔',
     NEW_CONTROL:'🗓️',
     CONTROL_CANCELLED:'🚫',
-    CLINICAL_ALERT:'🔴'
+    CLINICAL_ALERT:'🔴',
+    WEIGHT_UPDATED:'✏️',
+    WEIGHT_REMOVED:'🗑️'
   };
   return icons[type]||'🔔';
 }
@@ -1388,7 +1391,9 @@ function notificationDestinationLabel(n){
     PUSH_TEST:'Abrir BodyCare',
     NEW_CONTROL:'Ver control',
     CONTROL_CANCELLED:'Ver controles',
-    CLINICAL_ALERT:'Revisar paciente'
+    CLINICAL_ALERT:'Revisar paciente',
+    WEIGHT_UPDATED:'Ver seguimiento',
+    WEIGHT_REMOVED:'Ver seguimiento'
   };
   return map[n.type]||'Abrir';
 }
@@ -1530,7 +1535,7 @@ async function openNotificationById(id){
     return;
   }
 
-  if((n.type==='NEW_WEIGHT'||n.type==='NEW_PATIENT') && hasRole('DOCTOR')){
+  if((['NEW_WEIGHT','WEIGHT_UPDATED','WEIGHT_REMOVED','NEW_PATIENT'].includes(n.type)) && hasRole('DOCTOR')){
     activePortal='DOCTOR';
     localStorage.setItem('pesocare_active_portal','DOCTOR');
     if(n.type==='NEW_WEIGHT'&&n.related_user_id){
@@ -1730,7 +1735,7 @@ async function handleRealtimeNotification(n,fromFallback=false){
       }
     }
 
-    if(n.type==='NEW_WEIGHT'&&hasRole('DOCTOR')){
+    if(['NEW_WEIGHT','WEIGHT_UPDATED','WEIGHT_REMOVED'].includes(n.type)&&hasRole('DOCTOR')){
       if(doctorPatientDetail?.profile?.user_id===n.related_user_id&&!userIsTyping()){
         await openDoctorPatient(n.related_user_id);
       }else if(activePortal==='DOCTOR'&&!doctorPatientDetail&&!userIsTyping()){
@@ -2006,7 +2011,7 @@ async function loadData(){
     const p=await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&limit=1`);
     profile=p?.[0]||null;
     if(profile){
-      records=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=measured_on.asc,created_at.asc`)||[];
+      records=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=measured_on.asc,created_at.asc`)||[];
     }
 
     careLinks=await dbGet(`doctor_patient_links?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.ACTIVE&order=created_at.asc`)||[];
@@ -2255,6 +2260,7 @@ function dashboardView(){
   const abdomenChange=currentAbdomen!==null&&initialAbdomen!==null?currentAbdomen-initialAbdomen:null;
   const currentWeek=weekOf(latest.measured_on);
   const progress=Math.min(100,Math.max(0,(currentWeek/Math.max(1,profile.planned_weeks))*100));
+  const editingRecord=editingWeightRecordId?records.find(r=>r.id===editingWeightRecordId)||null:null;
 
   app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
     <section class="card">
@@ -2274,24 +2280,55 @@ function dashboardView(){
       <div class="metric"><span>Semana</span><strong>${currentWeek} / ${profile.planned_weeks}</strong></div>
       <div class="metric"><span>Peso meta</span><strong>${goal?kg(goal):'—'}</strong></div>
     </section>
-    <section class="card">
-      <h2 class="section-title">Registrar peso</h2>
-      <p class="muted">La fecha de hoy viene propuesta. Puedes cambiarla para registrar un dato anterior.</p>
+    <section class="card" id="weightEntryCard">
+      <div class="card-head">
+        <div>
+          <h2 class="section-title">${editingRecord?'Editar registro':'Registrar peso'}</h2>
+          <p class="muted">${editingRecord
+            ? (editingRecord.is_initial?'Puedes corregir peso y circunferencia del registro inicial. La fecha inicial se mantiene.':'Corrige fecha, peso o circunferencia y guarda los cambios.')
+            :'La fecha de hoy viene propuesta. Puedes cambiarla para registrar un dato anterior.'}</p>
+        </div>
+        ${editingRecord?'<span class="edit-badge">Modo edición</span>':''}
+      </div>
       <form id="weightForm"><div class="record-grid">
-        <div class="record-field"><label for="date">Fecha</label><div class="control-frame"><input id="date" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(today())}" required></div></div>
-        <div class="record-field"><label for="weight">Peso (kg)</label><div class="control-frame"><input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 94,85" required></div></div>
-        <div class="record-field"><label for="abdomen">Circunferencia abdominal (cm)</label><div class="control-frame"><input id="abdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 111,50" required></div></div>
-      </div><button class="primary" style="margin-top:12px">Guardar registro</button><p id="weightMsg" class="error"></p></form>
+        <div class="record-field"><label for="date">Fecha</label><div class="control-frame"><input id="date" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(editingRecord?.measured_on||today())}" ${editingRecord?.is_initial?'readonly':''} required></div></div>
+        <div class="record-field"><label for="weight">Peso (kg)</label><div class="control-frame"><input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 94,85" value="${editingRecord?String(editingRecord.weight_kg).replace('.',','):''}" required></div></div>
+        <div class="record-field"><label for="abdomen">Circunferencia abdominal (cm)</label><div class="control-frame"><input id="abdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 111,50" value="${editingRecord?.abdominal_circumference_cm!==null&&editingRecord?.abdominal_circumference_cm!==undefined?String(editingRecord.abdominal_circumference_cm).replace('.',','):''}" required></div></div>
+      </div>
+      <div class="form-actions" style="margin-top:12px">
+        <button class="primary" type="submit">${editingRecord?'Guardar cambios':'Guardar registro'}</button>
+        ${editingRecord?'<button class="secondary" type="button" id="cancelWeightEdit">Cancelar edición</button>':''}
+      </div>
+      <p id="weightMsg" class="error"></p></form>
     </section>
     <section class="card"><h2 class="section-title">Peso por semana</h2><div class="muted">Evolución desde Semana 0 hasta Semana ${profile.planned_weeks}</div><div id="chart" class="chart-wrap"></div></section>
     <section class="card"><h2 class="section-title">Circunferencia abdominal por semana</h2><div class="muted">Evolución en centímetros durante el seguimiento</div><div id="abdomenChart" class="chart-wrap"></div></section>
     <section class="card">
       <h2 class="section-title">Historial</h2>
-      <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circ. abdominal</th></tr></thead>
-      <tbody>${sorted.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOf(r.measured_on)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circ. abdominal</th><th>Acciones</th></tr></thead>
+      <tbody>${sorted.map(r=>`<tr>
+        <td>${fmt(r.measured_on)}${r.is_initial?' <span class="initial-record-chip">Inicial</span>':''}</td>
+        <td>${weekOf(r.measured_on)}</td>
+        <td>${kg(r.weight_kg)}</td>
+        <td>${cm(r.abdominal_circumference_cm)}</td>
+        <td><div class="record-actions">
+          <button type="button" class="secondary small-btn" data-edit-weight="${r.id}">Editar</button>
+          ${r.is_initial?'':`<button type="button" class="secondary small-btn danger-outline" data-delete-weight="${r.id}">Eliminar</button>`}
+        </div></td>
+      </tr>`).join('')}</tbody></table></div>
     </section>`);
 
-  document.getElementById('weightForm').addEventListener('submit',addWeight);
+  document.getElementById('weightForm').addEventListener('submit',saveWeightRecord);
+  document.getElementById('cancelWeightEdit')?.addEventListener('click',()=>{
+    editingWeightRecordId=null;
+    dashboardView();
+  });
+  document.querySelectorAll('[data-edit-weight]').forEach(btn=>btn.addEventListener('click',()=>{
+    editingWeightRecordId=btn.dataset.editWeight;
+    dashboardView();
+    setTimeout(()=>document.getElementById('weightEntryCard')?.scrollIntoView({behavior:'smooth',block:'start'}),80);
+  }));
+  document.querySelectorAll('[data-delete-weight]').forEach(btn=>btn.addEventListener('click',()=>deleteWeightRecord(btn.dataset.deleteWeight)));
   bindDateCLInputs();
   document.getElementById('reportBtn').addEventListener('click',generateReport);
   document.getElementById('editPlan').addEventListener('click',editPlan);
@@ -3273,7 +3310,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.3'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.4'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -3984,7 +4021,7 @@ async function openDoctorPatient(patientId){
     try{doctorPriorities=await dbRpc('bodycare_get_doctor_priorities',{})||[]}catch{}
     const p=(await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(patientId)}&limit=1`))?.[0];
     if(!p)throw new Error('No se encontró la ficha del paciente.');
-    const recs=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(patientId)}&order=measured_on.asc,created_at.asc`)||[];
+    const recs=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(patientId)}&deleted_at=is.null&order=measured_on.asc,created_at.asc`)||[];
     const prescriptions=(await dbRpc('bodycare_get_prescriptions',{
       p_doctor_user_id:currentUser.id,
       p_patient_user_id:patientId
@@ -4486,8 +4523,9 @@ async function adminDeleteUser(id){
   catch(err){alert(err.message)}
 }
 
-async function addWeight(e){
+async function saveWeightRecord(e){
   e.preventDefault();
+
   const weight_kg=parseDecimal(document.getElementById('weight').value);
   const abdominal_circumference_cm=parseDecimal(document.getElementById('abdomen').value);
   const msg=document.getElementById('weightMsg');
@@ -4501,7 +4539,9 @@ async function addWeight(e){
     return;
   }
 
-  if(parseDate(measured_on)<parseDate(profile.start_date)){
+  const editing=editingWeightRecordId?records.find(r=>r.id===editingWeightRecordId)||null:null;
+
+  if(!editing?.is_initial && parseDate(measured_on)<parseDate(profile.start_date)){
     msg.textContent='La fecha no puede ser anterior al inicio del seguimiento.';
     return;
   }
@@ -4514,18 +4554,76 @@ async function addWeight(e){
     return;
   }
 
+  const button=e.submitter||e.target.querySelector('button[type="submit"]');
+  if(button)button.disabled=true;
+  msg.className='muted';
+  msg.textContent=editing?'Guardando cambios…':'Guardando registro…';
+
   try{
-    await dbInsert('weight_records',{
-      user_id:currentUser.id,
-      measured_on,
-      weight_kg,
-      abdominal_circumference_cm,
-      is_initial:false
+    const rows=await dbRpc('bodycare_save_weight_record',{
+      p_record_id:editingWeightRecordId||null,
+      p_measured_on:measured_on,
+      p_weight_kg:weight_kg,
+      p_abdominal_circumference_cm:abdominal_circumference_cm
     });
-    await loadData();
-    render();
+
+    const saved=Array.isArray(rows)?rows[0]:rows;
+    if(!saved?.id)throw new Error('No se recibió confirmación del registro guardado.');
+
+    // Update local state immediately; do not wait for a full loadData().
+    records=[
+      ...records.filter(r=>r.id!==saved.id),
+      saved
+    ].filter(r=>!r.deleted_at)
+     .sort((a,b)=>String(a.measured_on).localeCompare(String(b.measured_on))||String(a.created_at).localeCompare(String(b.created_at)));
+
+    if(saved.is_initial){
+      profile={
+        ...profile,
+        initial_weight_kg:saved.weight_kg,
+        initial_abdominal_circumference_cm:saved.abdominal_circumference_cm
+      };
+    }
+
+    editingWeightRecordId=null;
+    dashboardView();
+
+    showToast(
+      editing?'Registro actualizado':'Registro guardado',
+      editing?'Los cambios se reflejaron en tu seguimiento.':'Tu peso y circunferencia se actualizaron inmediatamente.',
+      editing?'WEIGHT_UPDATED':'NEW_WEIGHT'
+    );
   }catch(err){
+    msg.className='error';
     msg.textContent='No fue posible guardar el registro: '+err.message;
+    if(button)button.disabled=false;
+  }
+}
+
+async function deleteWeightRecord(id){
+  const record=records.find(r=>r.id===id);
+  if(!record)return;
+  if(record.is_initial){
+    alert('El registro inicial no puede eliminarse. Puedes editar sus valores si necesitas corregirlos.');
+    return;
+  }
+
+  if(!confirm(`¿Eliminar el registro del ${fmt(record.measured_on)}? Dejará de afectar tus métricas y gráficos.`))return;
+
+  const previous=[...records];
+
+  // Optimistic removal.
+  records=records.filter(r=>r.id!==id);
+  if(editingWeightRecordId===id)editingWeightRecordId=null;
+  dashboardView();
+
+  try{
+    await dbRpc('bodycare_delete_weight_record',{p_record_id:id});
+    showToast('Registro eliminado','El registro fue retirado del seguimiento y quedó conservado para auditoría.','WEIGHT_REMOVED');
+  }catch(err){
+    records=previous;
+    dashboardView();
+    alert('No fue posible eliminar el registro: '+err.message);
   }
 }
 
@@ -4578,7 +4676,7 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorPatientDetail=null;editingPrescriptionId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){
