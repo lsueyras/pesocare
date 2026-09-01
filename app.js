@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='14.3';
+const APP_VERSION='14.4';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
 const SIGNUP_COOLDOWN_KEY='pesocare_signup_cooldown_until';
@@ -23,6 +23,9 @@ let realtimeSocket=null, realtimeHeartbeat=null, realtimeReconnectTimer=null;
 let realtimeAttempts=0, realtimeRef=0, realtimeJoinRef=null, realtimeTopic=null;
 let realtimeStatus='offline', realtimeManuallyStopped=false;
 let realtimeFallbackTimer=null;
+let activePatientTab=localStorage.getItem('pesocare_patient_tab')||'TRACKING';
+let patientMedicalSyncSeq=0, doctorMedicalSyncSeq=0, supportSyncSeq=0;
+let contextSyncTimer=null, lifecycleSyncBound=false;
 
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const parseDate=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(Date.UTC(y,m-1,d))};
@@ -230,6 +233,9 @@ function bindCommonHeader(){
       activePortal=portal;
       localStorage.setItem('pesocare_active_portal',portal);
       doctorPatientDetail=null;
+      patientMedicalSyncSeq++;
+      doctorMedicalSyncSeq++;
+      supportSyncSeq++;
       render();
     });
   });
@@ -608,38 +614,15 @@ async function handleRealtimeNotification(n,fromFallback=false){
   if(!fromFallback||!exists)showToast(n.title,n.body,n.type);
 
   try{
-    if(['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'].includes(n.type)){
-      if(hasRole('PATIENT')&&n.related_user_id){
-        if(n.type==='MESSAGE_DELETED'&&n.entity_id){
-          patientMessages=patientMessages.filter(m=>m.id!==n.entity_id);
-          renderPatientMessageThread();
-        }
-        if(n.type==='CONVERSATION_CLEARED'){
-          patientMessages=patientMessages.filter(m=>m.doctor_user_id!==n.related_user_id);
-          renderPatientMessageThread();
-        }
-        await syncPatientConversation(n.related_user_id);
+    if(['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED','NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'].includes(n.type)){
+      if(hasRole('PATIENT')){
+        patientMedicalSyncSeq++;
+        if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR')await syncPatientMedicalData();
       }
-
       if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id===n.related_user_id){
-        if(n.type==='MESSAGE_DELETED'&&n.entity_id){
-          doctorPatientDetail.messages=(doctorPatientDetail.messages||[]).filter(m=>m.id!==n.entity_id);
-          renderDoctorMessageThread();
-        }
-        if(n.type==='CONVERSATION_CLEARED'){
-          doctorPatientDetail.messages=[];
-          renderDoctorMessageThread();
-        }
-        await syncDoctorConversation(n.related_user_id);
+        doctorMedicalSyncSeq++;
+        await syncDoctorMedicalData(n.related_user_id);
       }
-    }
-
-    if(['NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'].includes(n.type)&&hasRole('PATIENT')){
-      if(n.type==='PRESCRIPTION_REMOVED'&&n.entity_id){
-        patientPrescriptions=patientPrescriptions.filter(p=>p.id!==n.entity_id);
-        renderPatientPrescriptionList();
-      }
-      await syncPatientPrescriptions();
     }
 
     if(n.type==='NEW_WEIGHT'&&hasRole('DOCTOR')){
@@ -658,9 +641,7 @@ async function handleRealtimeNotification(n,fromFallback=false){
       adminLoaded=false;
       if(activePortal==='ADMIN'&&!userIsTyping())render();
     }
-  }catch(err){
-    console.warn('Realtime refresh failed',err);
-  }
+  }catch(err){console.warn('Realtime refresh failed',err)}
 }
 
 function renderDoctorMessageThread(){
@@ -951,8 +932,17 @@ function render(){
   else if(activePortal==='ADMIN'&&hasRole('ADMIN'))result=adminView();
   else if(activePortal==='DOCTOR'&&hasRole('DOCTOR')){
     result=doctorPatientDetail?doctorPatientDetailView():doctorView();
-  }else result=profile?dashboardView():initialProfileView();
+  }else if(!profile){
+    result=initialProfileView();
+  }else if(activePatientTab==='DOCTOR'){
+    result=patientDoctorView();
+  }else if(activePatientTab==='SUPPORT'){
+    result=patientSupportView();
+  }else{
+    result=dashboardView();
+  }
   setTimeout(startRealtime,0);
+  setTimeout(startContextSync,0);
   return result;
 }
 
@@ -1052,10 +1042,81 @@ async function createProfile(e){
   }
 }
 
+
+function medicalUnreadCount(){
+  return notifications.filter(n=>!n.read_at&&[
+    'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED',
+    'NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'
+  ].includes(n.type)).length;
+}
+
+function patientSubTabsMarkup(){
+  const medicalCount=medicalUnreadCount();
+  const openTickets=(supportTickets||[]).filter(t=>t.status!=='RESOLVED').length;
+  return `<nav class="patient-subtabs" aria-label="Secciones del paciente">
+    <button type="button" class="patient-subtab ${activePatientTab==='TRACKING'?'active':''}" data-patient-tab="TRACKING">Seguimiento</button>
+    <button type="button" class="patient-subtab ${activePatientTab==='DOCTOR'?'active':''}" data-patient-tab="DOCTOR">
+      Mi médico ${medicalCount?`<span class="subtab-badge">${medicalCount>99?'99+':medicalCount}</span>`:''}
+    </button>
+    <button type="button" class="patient-subtab ${activePatientTab==='SUPPORT'?'active':''}" data-patient-tab="SUPPORT">
+      Soporte ${openTickets?`<span class="subtab-badge neutral">${openTickets}</span>`:''}
+    </button>
+  </nav>`;
+}
+
+function bindPatientSubTabs(){
+  document.querySelectorAll('[data-patient-tab]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const next=btn.dataset.patientTab;
+      if(!['TRACKING','DOCTOR','SUPPORT'].includes(next))return;
+      activePatientTab=next;
+      localStorage.setItem('pesocare_patient_tab',next);
+      patientMedicalSyncSeq++;
+      supportSyncSeq++;
+      render();
+    });
+  });
+}
+
+function bindLifecycleSync(){
+  if(lifecycleSyncBound)return;
+  lifecycleSyncBound=true;
+  const refresh=()=>{
+    if(document.visibilityState==='visible')syncVisibleContext();
+  };
+  window.addEventListener('focus',refresh);
+  document.addEventListener('visibilitychange',refresh);
+}
+
+async function syncVisibleContext(){
+  try{
+    if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR')await syncPatientMedicalData();
+    else if(activePortal==='PATIENT'&&activePatientTab==='SUPPORT')await syncSupportTickets();
+    else if(activePortal==='DOCTOR'&&doctorPatientDetail?.profile?.user_id)await syncDoctorMedicalData(doctorPatientDetail.profile.user_id);
+  }catch(err){console.warn('Context sync failed',err)}
+}
+
+function startContextSync(){
+  if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
+  bindLifecycleSync();
+
+  if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
+    syncPatientMedicalData();
+    contextSyncTimer=setInterval(()=>syncPatientMedicalData(),2500);
+  }else if(activePortal==='PATIENT'&&activePatientTab==='SUPPORT'){
+    syncSupportTickets();
+    contextSyncTimer=setInterval(()=>syncSupportTickets(),10000);
+  }else if(activePortal==='DOCTOR'&&doctorPatientDetail?.profile?.user_id){
+    const patientId=doctorPatientDetail.profile.user_id;
+    syncDoctorMedicalData(patientId);
+    contextSyncTimer=setInterval(()=>syncDoctorMedicalData(patientId),2500);
+  }
+}
+
 function dashboardView(){
   const sorted=[...records].sort((a,b)=>a.measured_on.localeCompare(b.measured_on)||String(a.created_at).localeCompare(String(b.created_at)));
   const latest=sorted.at(-1);
-  if(!latest){app.innerHTML=shell(`${header()}<section class="card"><div class="error">No se encontró el registro inicial.</div></section>`);return}
+  if(!latest){app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}<section class="card"><div class="error">No se encontró el registro inicial.</div></section>`);bindCommonHeader();bindPatientSubTabs();return}
   const change=Number(latest.weight_kg)-Number(profile.initial_weight_kg);
   const goal=profile.target_weight_kg?Number(profile.target_weight_kg):null;
   const latestWithAbdomen=[...sorted].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined);
@@ -1064,7 +1125,8 @@ function dashboardView(){
   const abdomenChange=currentAbdomen!==null&&initialAbdomen!==null?currentAbdomen-initialAbdomen:null;
   const currentWeek=weekOf(latest.measured_on);
   const progress=Math.min(100,Math.max(0,(currentWeek/Math.max(1,profile.planned_weeks))*100));
-  app.innerHTML=shell(`${header()}
+
+  app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
     <section class="card">
       <div class="top" style="margin-bottom:6px">
         <div><h2 class="section-title">Hola, ${esc(profile.full_name.split(' ')[0])}</h2><div class="muted">Seguimiento de ${profile.planned_weeks} semanas · Inicio ${fmt(profile.start_date)}</div></div>
@@ -1086,44 +1148,42 @@ function dashboardView(){
       <h2 class="section-title">Registrar peso</h2>
       <p class="muted">La fecha de hoy viene propuesta. Puedes cambiarla para registrar un dato anterior.</p>
       <form id="weightForm"><div class="record-grid">
-        <div class="record-field">
-          <label for="date">Fecha</label>
-          <div class="control-frame">
-            <input id="date" type="date" value="${today()}" required>
-          </div>
-        </div>
-        <div class="record-field">
-          <label for="weight">Peso (kg)</label>
-          <div class="control-frame">
-            <input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 94,85" required>
-          </div>
-        </div>
-        <div class="record-field">
-          <label for="abdomen">Circunferencia abdominal (cm)</label>
-          <div class="control-frame">
-            <input id="abdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 111,50" required>
-          </div>
-        </div>
+        <div class="record-field"><label for="date">Fecha</label><div class="control-frame"><input id="date" type="date" value="${today()}" required></div></div>
+        <div class="record-field"><label for="weight">Peso (kg)</label><div class="control-frame"><input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 94,85" required></div></div>
+        <div class="record-field"><label for="abdomen">Circunferencia abdominal (cm)</label><div class="control-frame"><input id="abdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 111,50" required></div></div>
       </div><button class="primary" style="margin-top:12px">Guardar registro</button><p id="weightMsg" class="error"></p></form>
     </section>
-    <section class="card">
-      <h2 class="section-title">Peso por semana</h2>
-      <div class="muted">Evolución desde Semana 0 hasta Semana ${profile.planned_weeks}</div>
-      <div id="chart" class="chart-wrap"></div>
-    </section>
-    <section class="card">
-      <h2 class="section-title">Circunferencia abdominal por semana</h2>
-      <div class="muted">Evolución en centímetros durante el seguimiento</div>
-      <div id="abdomenChart" class="chart-wrap"></div>
-    </section>
+    <section class="card"><h2 class="section-title">Peso por semana</h2><div class="muted">Evolución desde Semana 0 hasta Semana ${profile.planned_weeks}</div><div id="chart" class="chart-wrap"></div></section>
+    <section class="card"><h2 class="section-title">Circunferencia abdominal por semana</h2><div class="muted">Evolución en centímetros durante el seguimiento</div><div id="abdomenChart" class="chart-wrap"></div></section>
     <section class="card">
       <h2 class="section-title">Historial</h2>
       <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circ. abdominal</th></tr></thead>
       <tbody>${sorted.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOf(r.measured_on)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table></div>
+    </section>`);
+
+  document.getElementById('weightForm').addEventListener('submit',addWeight);
+  document.getElementById('reportBtn').addEventListener('click',generateReport);
+  document.getElementById('editPlan').addEventListener('click',editPlan);
+  bindCommonHeader();
+  bindPatientSubTabs();
+  drawCharts(sorted);
+}
+
+function patientDoctorView(){
+  const selectedStored=localStorage.getItem('pesocare_selected_doctor');
+  const selectedDoctor=linkedDoctorProfiles.some(d=>d.user_id===selectedStored)?selectedStored:(linkedDoctorProfiles[0]?.user_id||'');
+
+  app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
+    <section class="card patient-section-hero">
+      <div>
+        <h2 class="section-title">Mi médico</h2>
+        <div class="muted">Mensajes, indicaciones y profesionales autorizados en un solo lugar.</div>
+      </div>
+      <span class="realtime-pill"><i class="live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}"></i>Sincronización automática</span>
     </section>
+
     <section class="card">
-      <h2 class="section-title">Mi equipo médico</h2>
-      <div class="muted">Autoriza a un médico para revisar tu seguimiento.</div>
+      <h2 class="section-title">Profesionales vinculados</h2>
       ${linkedDoctorProfiles.length
         ? linkedDoctorProfiles.map(d=>`
           <div class="doctor-row">
@@ -1144,46 +1204,60 @@ function dashboardView(){
 
     <section class="card">
       <h2 class="section-title">Indicaciones compartidas</h2>
-      <div class="integration-note">La receta electrónica, firma y conexión SNRE quedan pendientes. Las indicaciones compartidas funcionan dentro de PesoCare, pero todavía no sustituyen una receta oficial.</div>
+      <div class="integration-note">La receta electrónica, firma y conexión SNRE quedan pendientes. Estas indicaciones funcionan dentro de PesoCare y no sustituyen todavía una receta oficial.</div>
       <div id="patientPrescriptionList">${patientPrescriptionListMarkup()}</div>
     </section>
 
     <section class="card">
-      <h2 class="section-title">Mensajes con tu médico</h2>
+      <div class="card-head">
+        <div><h2 class="section-title">Mensajes</h2><div class="muted">La conversación se actualiza automáticamente.</div></div>
+        ${linkedDoctorProfiles.length?'<button type="button" class="link-danger" id="patientClearConversation">Eliminar historial</button>':''}
+      </div>
       ${linkedDoctorProfiles.length?`
+        <label for="patientDoctorSelect">Conversación con</label>
         <select id="patientDoctorSelect">
-          ${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}">${esc(d.display_name||'Médico')}</option>`).join('')}
+          ${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}" ${d.user_id===selectedDoctor?'selected':''}>${esc(d.display_name||'Médico')}</option>`).join('')}
         </select>
         <div id="patientMessageThread" class="message-thread"></div>
         <form id="patientMessageForm" class="message-form">
           <textarea id="patientMessageText" rows="3" maxlength="4000" placeholder="Escribe un mensaje..." required></textarea>
           <button class="primary" type="submit">Enviar mensaje</button>
-        </form>
-        <div class="conversation-tools"><button type="button" class="link-danger" id="patientClearConversation">Eliminar historial de conversación</button></div>`
+        </form>`
       :'<div class="empty-state">Vincula un médico para habilitar mensajería.</div>'}
-    </section>
+    </section>`);
 
+  bindCommonHeader();
+  bindPatientSubTabs();
+  bindPatientCare();
+  renderPatientPrescriptionList();
+  renderPatientMessageThread();
+  markVisibleMedicalNotifications();
+}
+
+function patientSupportView(){
+  app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
+    <section class="card patient-section-hero">
+      <div><h2 class="section-title">Soporte PesoCare</h2><div class="muted">Reporta incidencias y revisa el estado de tus solicitudes.</div></div>
+    </section>
     <section class="card">
-      <h2 class="section-title">Soporte PesoCare</h2>
-      <p class="muted">Reporta un problema directamente desde la aplicación.</p>
+      <h2 class="section-title">Nueva solicitud</h2>
       <form id="supportForm">
         <div class="grid">
           <div><label>Asunto</label><input id="supportSubject" required placeholder="Ej: No puedo registrar un dato"></div>
-          <div><label>Descripción</label><textarea id="supportDescription" rows="3" required></textarea></div>
+          <div><label>Descripción</label><textarea id="supportDescription" rows="4" required></textarea></div>
         </div>
-        <button class="secondary" type="submit" style="margin-top:12px">Enviar soporte</button>
+        <button class="primary" type="submit" style="margin-top:12px">Enviar solicitud</button>
         <p id="supportMsg" class="error"></p>
       </form>
-      ${supportTickets.length?`<div class="ticket-list">${supportTickets.slice(0,5).map(t=>`
-        <div class="ticket-row"><strong>${esc(t.subject)}</strong><span class="status-chip status-${t.status.toLowerCase()}">${t.status}</span></div>`).join('')}</div>`:''}
+    </section>
+    <section class="card">
+      <h2 class="section-title">Mis solicitudes</h2>
+      <div id="supportTicketList">${supportTicketListMarkup()}</div>
     </section>`);
-  document.getElementById('weightForm').addEventListener('submit',addWeight);
-  document.getElementById('reportBtn').addEventListener('click',generateReport);
-  document.getElementById('editPlan').addEventListener('click',editPlan);
+
   bindCommonHeader();
+  bindPatientSubTabs();
   bindPatientCare();
-  drawCharts(sorted);
-  renderPatientMessageThread();
 }
 
 
@@ -1462,9 +1536,16 @@ function bindPatientCare(){
     catch(err){alert(err.message)}
   }));
 
-  document.getElementById('patientDoctorSelect')?.addEventListener('change',renderPatientMessageThread);
+  document.getElementById('patientDoctorSelect')?.addEventListener('change',e=>{
+    localStorage.setItem('pesocare_selected_doctor',e.target.value);
+    renderPatientMessageThread();
+    syncPatientMedicalData();
+  });
   document.getElementById('patientMessageForm')?.addEventListener('submit',sendPatientMessage);
-  document.getElementById('patientClearConversation')?.addEventListener('click',()=>{const doctorId=document.getElementById('patientDoctorSelect')?.value;if(doctorId)clearConversation(doctorId,currentUser.id,'patient')});
+  document.getElementById('patientClearConversation')?.addEventListener('click',()=>{
+    const doctorId=document.getElementById('patientDoctorSelect')?.value;
+    if(doctorId)clearConversation(doctorId,currentUser.id,'patient');
+  });
 
   document.getElementById('supportForm')?.addEventListener('submit',async e=>{
     e.preventDefault();
@@ -1474,14 +1555,44 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'v14.3'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'v14.4'}
       });
-      msg.className='notice success';msg.textContent='Ticket enviado a PesoCare Admin.';
-      supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
+      msg.className='notice success';msg.textContent='Solicitud enviada a PesoCare Admin.';
+      e.target.reset();
+      await syncSupportTickets();
     }catch(err){msg.textContent=err.message}
   });
 }
 
+function supportTicketListMarkup(){
+  return supportTickets.length
+    ? supportTickets.map(t=>`
+      <div class="support-ticket-card">
+        <div class="support-ticket-head">
+          <strong>${esc(t.subject)}</strong>
+          <span class="status-chip status-${String(t.status).toLowerCase()}">${esc(t.status)}</span>
+        </div>
+        <div class="muted">${formatDateTime(t.created_at)}</div>
+        <div class="support-ticket-description">${esc(t.description||'')}</div>
+      </div>`).join('')
+    : '<div class="empty-state">Aún no tienes solicitudes de soporte.</div>';
+}
+
+function renderSupportTickets(){
+  const el=document.getElementById('supportTicketList');
+  if(el)el.innerHTML=supportTicketListMarkup();
+}
+
+async function syncSupportTickets(){
+  const seq=++supportSyncSeq;
+  if(!hasRole('PATIENT'))return;
+  try{
+    const rows=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
+    if(seq!==supportSyncSeq)return;
+    supportTickets=rows;
+    renderSupportTickets();
+  }catch(err){console.warn('Support sync',err)}
+}
 
 function patientPrescriptionListMarkup(){
   const active=(patientPrescriptions||[]).filter(p=>!p.deleted_at&&p.status==='SHARED');
@@ -1503,33 +1614,63 @@ function renderPatientPrescriptionList(){
   if(el)el.innerHTML=patientPrescriptionListMarkup();
 }
 
-async function syncPatientPrescriptions(){
-  if(!hasRole('PATIENT'))return;
-  patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)||[];
-  renderPatientPrescriptionList();
-}
-
-async function syncPatientConversation(doctorId=null){
-  if(!hasRole('PATIENT'))return;
-  patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
-  patientMessages=patientMessages.filter(m=>!m.deleted_at);
-  renderPatientMessageThread();
-}
-
-async function syncDoctorConversation(patientId){
-  if(!hasRole('DOCTOR')||!patientId)return;
-  const rows=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
-  if(doctorPatientDetail?.profile?.user_id===patientId){
-    doctorPatientDetail.messages=rows.filter(m=>!m.deleted_at);
-    renderDoctorMessageThread();
+function markVisibleMedicalNotifications(){
+  const selectedDoctor=document.getElementById('patientDoctorSelect')?.value;
+  notifications.filter(n=>!n.read_at&&[
+    'NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'
+  ].includes(n.type)).forEach(n=>markNotificationRead(n.id));
+  if(selectedDoctor){
+    notifications.filter(n=>!n.read_at&&[
+      'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'
+    ].includes(n.type)&&n.related_user_id===selectedDoctor).forEach(n=>markNotificationRead(n.id));
   }
 }
+
+async function syncPatientMedicalData(){
+  if(!hasRole('PATIENT'))return;
+  const seq=++patientMedicalSyncSeq;
+  try{
+    const [messages,prescriptions]=await Promise.all([
+      dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`),
+      dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)
+    ]);
+    if(seq!==patientMedicalSyncSeq)return;
+    patientMessages=(messages||[]).filter(m=>!m.deleted_at);
+    patientPrescriptions=(prescriptions||[]).filter(p=>!p.deleted_at&&p.status==='SHARED');
+    renderPatientPrescriptionList();
+    renderPatientMessageThread();
+  }catch(err){console.warn('Patient medical sync',err)}
+}
+
+async function syncPatientPrescriptions(){return syncPatientMedicalData()}
+async function syncPatientConversation(){return syncPatientMedicalData()}
+
+async function syncDoctorMedicalData(patientId){
+  if(!hasRole('DOCTOR')||!patientId)return;
+  const seq=++doctorMedicalSyncSeq;
+  try{
+    const [messages,prescriptions]=await Promise.all([
+      dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`),
+      dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.desc`)
+    ]);
+    if(seq!==doctorMedicalSyncSeq)return;
+    if(doctorPatientDetail?.profile?.user_id!==patientId)return;
+    doctorPatientDetail.messages=(messages||[]).filter(m=>!m.deleted_at);
+    doctorPatientDetail.prescriptions=(prescriptions||[]).filter(p=>!p.deleted_at);
+    renderDoctorMessageThread();
+    renderDoctorPrescriptionList();
+  }catch(err){console.warn('Doctor medical sync',err)}
+}
+
+async function syncDoctorConversation(patientId){return syncDoctorMedicalData(patientId)}
+
 
 function renderPatientMessageThread(){
   const select=document.getElementById('patientDoctorSelect');
   const el=document.getElementById('patientMessageThread');
   if(!select||!el)return;
   const doctorId=select.value;
+  localStorage.setItem('pesocare_selected_doctor',doctorId);
   notifications.filter(n=>!n.read_at&&['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'].includes(n.type)&&n.related_user_id===doctorId).forEach(n=>markNotificationRead(n.id));
   const messages=patientMessages.filter(m=>m.doctor_user_id===doctorId&&!m.deleted_at);
   el.innerHTML=messages.length?messages.map(m=>`
@@ -1548,9 +1689,10 @@ async function sendPatientMessage(e){
   const message=input?.value.trim();
   if(!doctorId||!message)return;
   try{
+    patientMedicalSyncSeq++;
     await dbInsert('care_messages',{doctor_user_id:doctorId,patient_user_id:currentUser.id,sender_user_id:currentUser.id,message});
     input.value='';
-    await syncPatientConversation(doctorId);
+    await syncPatientMedicalData();
   }catch(err){alert(err.message)}
 }
 
@@ -1652,6 +1794,7 @@ function buildStandaloneChart(rows,p,field,goal=null,yLabel='',suffix=''){
 }
 
 async function openDoctorPatient(patientId){
+  doctorMedicalSyncSeq++;
   try{
     const p=(await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(patientId)}&limit=1`))?.[0];
     if(!p)throw new Error('No se encontró la ficha del paciente.');
@@ -1663,6 +1806,30 @@ async function openDoctorPatient(patientId){
     for(const n of matching)markNotificationRead(n.id);
     doctorPatientDetailView();
   }catch(err){alert(err.message)}
+}
+
+
+function doctorPrescriptionListMarkup(){
+  const rows=(doctorPatientDetail?.prescriptions||[]).filter(rx=>!rx.deleted_at);
+  return rows.length?`<div class="prescription-list">${rows.map(rx=>`
+    <div class="prescription-card">
+      <div class="prescription-card-head"><div><strong>${esc(rx.medication_name)} · ${esc(rx.dose_text)}</strong><div>${esc(rx.frequency_text)}${rx.duration_text?` · ${esc(rx.duration_text)}`:''}</div></div><span class="revision-chip">v${rx.revision||1}</span></div>
+      ${rx.instructions?`<div class="muted prescription-instructions">${esc(rx.instructions)}</div>`:''}
+      <div class="small-muted">${rx.status} · receta legal pendiente · actualizada ${formatDateTime(rx.updated_at)}</div>
+      <div class="prescription-actions"><button type="button" class="secondary small-btn" data-edit-prescription="${rx.id}">Editar</button><button type="button" class="danger-btn small-btn" data-delete-prescription="${rx.id}">Eliminar</button></div>
+    </div>`).join('')}</div>`:'<div class="empty-state">Todavía no hay indicaciones para este paciente.</div>';
+}
+
+function renderDoctorPrescriptionList(){
+  const el=document.getElementById('doctorPrescriptionList');
+  if(!el)return;
+  el.innerHTML=doctorPrescriptionListMarkup();
+  el.querySelectorAll('[data-edit-prescription]').forEach(btn=>btn.addEventListener('click',()=>{
+    editingPrescriptionId=btn.dataset.editPrescription;
+    doctorPatientDetailView();
+    document.getElementById('doctorPrescriptionForm')?.scrollIntoView({behavior:'smooth',block:'start'});
+  }));
+  el.querySelectorAll('[data-delete-prescription]').forEach(btn=>btn.addEventListener('click',()=>deleteDoctorPrescription(btn.dataset.deletePrescription)));
 }
 
 function doctorPatientDetailView(){
@@ -1695,13 +1862,7 @@ function doctorPatientDetailView(){
         <div><label>Duración</label><input id="rxDuration" placeholder="Ej: 4 semanas" value="${esc(editing?.duration_text||'')}"></div>
       </div><label style="margin-top:10px">Indicaciones</label><textarea id="rxInstructions" rows="3">${esc(editing?.instructions||'')}</textarea>
       <div class="form-actions"><button class="primary" type="submit">${editing?'Guardar cambios':'Guardar y compartir indicación'}</button>${editing?'<button class="secondary" id="cancelPrescriptionEdit" type="button">Cancelar edición</button>':''}</div></form>
-      ${d.prescriptions.length?`<div class="prescription-list">${d.prescriptions.map(rx=>`
-        <div class="prescription-card">
-          <div class="prescription-card-head"><div><strong>${esc(rx.medication_name)} · ${esc(rx.dose_text)}</strong><div>${esc(rx.frequency_text)}${rx.duration_text?` · ${esc(rx.duration_text)}`:''}</div></div><span class="revision-chip">v${rx.revision||1}</span></div>
-          ${rx.instructions?`<div class="muted prescription-instructions">${esc(rx.instructions)}</div>`:''}
-          <div class="small-muted">${rx.status} · receta legal pendiente · actualizada ${formatDateTime(rx.updated_at)}</div>
-          <div class="prescription-actions"><button type="button" class="secondary small-btn" data-edit-prescription="${rx.id}">Editar</button><button type="button" class="danger-btn small-btn" data-delete-prescription="${rx.id}">Eliminar</button></div>
-        </div>`).join('')}</div>`:'<div class="empty-state">Todavía no hay indicaciones para este paciente.</div>'}
+      <div id="doctorPrescriptionList">${doctorPrescriptionListMarkup()}</div>
     </section>
     <section class="card">
       <div class="card-head"><div><h2 class="section-title">Mensajes</h2><div class="muted">Puedes eliminar tus mensajes enviados o limpiar todo el historial visible.</div></div><button type="button" class="link-danger" id="doctorClearConversation">Eliminar historial</button></div>
@@ -1714,11 +1875,10 @@ function doctorPatientDetailView(){
     </section>`);
   bindCommonHeader();
   renderDoctorMessageThread();
+  renderDoctorPrescriptionList();
   document.getElementById('backPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetail=null;doctorView()});
   document.getElementById('doctorPrescriptionForm')?.addEventListener('submit',saveDoctorPrescription);
   document.getElementById('cancelPrescriptionEdit')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetailView()});
-  document.querySelectorAll('[data-edit-prescription]').forEach(btn=>btn.addEventListener('click',()=>{editingPrescriptionId=btn.dataset.editPrescription;doctorPatientDetailView();document.getElementById('doctorPrescriptionForm')?.scrollIntoView({behavior:'smooth',block:'start'})}));
-  document.querySelectorAll('[data-delete-prescription]').forEach(btn=>btn.addEventListener('click',()=>deleteDoctorPrescription(btn.dataset.deletePrescription)));
   document.getElementById('doctorMessageForm')?.addEventListener('submit',sendDoctorMessage);
   document.getElementById('doctorClearConversation')?.addEventListener('click',()=>clearConversation(currentUser.id,p.user_id,'doctor'));
 }
@@ -1735,6 +1895,7 @@ async function saveDoctorPrescription(e){
     instructions:document.getElementById('rxInstructions').value.trim()||null
   };
   try{
+    doctorMedicalSyncSeq++;
     if(editingPrescriptionId){
       await dbUpdate('prescription_drafts',`id=eq.${encodeURIComponent(editingPrescriptionId)}`,payload);
       editingPrescriptionId=null;
@@ -1752,6 +1913,7 @@ async function deleteDoctorPrescription(id){
   const rx=doctorPatientDetail?.prescriptions?.find(x=>x.id===id);if(!rx)return;
   if(!confirm(`¿Eliminar la indicación de ${rx.medication_name}? El paciente dejará de verla. La acción quedará auditada.`))return;
   try{
+    doctorMedicalSyncSeq++;
     await dbRpc('delete_prescription_draft',{p_prescription_id:id});
     if(editingPrescriptionId===id)editingPrescriptionId=null;
     doctorPatientDetail.prescriptions=(doctorPatientDetail.prescriptions||[]).filter(p=>p.id!==id);
@@ -1763,16 +1925,20 @@ async function deleteDoctorPrescription(id){
 async function deleteSentMessage(id,context){
   if(!confirm('¿Eliminar este mensaje enviado? Desaparecerá de la conversación para ambos participantes.'))return;
   try{
+    if(context==='patient')patientMedicalSyncSeq++;
+    else doctorMedicalSyncSeq++;
+
     await dbRpc('delete_care_message',{p_message_id:id});
+
     if(context==='patient'){
       patientMessages=patientMessages.filter(m=>m.id!==id);
       renderPatientMessageThread();
-      await syncPatientConversation();
+      await syncPatientMedicalData();
     }else if(doctorPatientDetail){
       const patientId=doctorPatientDetail.profile.user_id;
       doctorPatientDetail.messages=(doctorPatientDetail.messages||[]).filter(m=>m.id!==id);
       renderDoctorMessageThread();
-      await syncDoctorConversation(patientId);
+      await syncDoctorMedicalData(patientId);
     }
   }catch(err){alert(err.message)}
 }
@@ -1781,15 +1947,19 @@ async function clearConversation(doctorId,patientId,context){
   if(!confirm('Esta acción eliminará todo el historial visible de la conversación para médico y paciente. Los eventos quedarán auditados. ¿Continuar?'))return;
   if(prompt('Escribe ELIMINAR para confirmar:')!=='ELIMINAR')return;
   try{
+    if(context==='patient')patientMedicalSyncSeq++;
+    else doctorMedicalSyncSeq++;
+
     await dbRpc('clear_care_conversation',{p_doctor_user_id:doctorId,p_patient_user_id:patientId});
+
     if(context==='patient'){
       patientMessages=patientMessages.filter(m=>m.doctor_user_id!==doctorId);
       renderPatientMessageThread();
-      await syncPatientConversation(doctorId);
+      await syncPatientMedicalData();
     }else if(doctorPatientDetail){
       doctorPatientDetail.messages=[];
       renderDoctorMessageThread();
-      await syncDoctorConversation(patientId);
+      await syncDoctorMedicalData(patientId);
     }
     showToast('Conversación eliminada','El historial visible fue eliminado correctamente.','CONVERSATION_CLEARED');
   }catch(err){alert(err.message)}
@@ -1799,9 +1969,10 @@ async function sendDoctorMessage(e){
   e.preventDefault();const p=doctorPatientDetail.profile;
   const message=document.getElementById('doctorMessageText').value.trim();if(!message)return;
   try{
+    doctorMedicalSyncSeq++;
     await dbInsert('care_messages',{doctor_user_id:currentUser.id,patient_user_id:p.user_id,sender_user_id:currentUser.id,message});
     document.getElementById('doctorMessageText').value='';
-    await syncDoctorConversation(p.user_id);
+    await syncDoctorMedicalData(p.user_id);
   }catch(err){alert(err.message)}
 }
 
@@ -2008,6 +2179,7 @@ async function editPlan(){
 
 async function logout(){
   stopRealtime();
+  if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
   clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];doctorProfile=null;doctorPatients=[];doctorPatientDetail=null;editingPrescriptionId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }

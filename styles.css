@@ -381,3 +381,70 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
 
 /* V14.3 — consistencia de sincronización */
 #patientPrescriptionList{display:block}
+
+/* V14.4 — navegación paciente y sincronización estable */
+.patient-subtabs{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px;
+  margin:0 0 14px;
+}
+.patient-subtab{
+  position:relative;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  min-height:46px;
+  border:1px solid #d0d5dd;
+  border-radius:12px;
+  background:#fff;
+  color:#475467;
+  font-weight:750;
+}
+.patient-subtab.active{
+  background:#175cd3;
+  color:#fff;
+  border-color:#175cd3;
+}
+.subtab-badge{
+  display:inline-grid;
+  place-items:center;
+  min-width:20px;
+  height:20px;
+  padding:0 5px;
+  border-radius:999px;
+  background:#d92d20;
+  color:#fff;
+  font-size:.68rem;
+  line-height:1;
+}
+.patient-subtab.active .subtab-badge{border:1px solid rgba(255,255,255,.65)}
+.subtab-badge.neutral{background:#667085}
+.patient-section-hero{
+  display:flex;
+  justify-content:space-between;
+  gap:14px;
+  align-items:center;
+}
+.support-ticket-card{
+  padding:12px 0;
+  border-bottom:1px solid #eaecf0;
+}
+.support-ticket-card:last-child{border-bottom:0}
+.support-ticket-head{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:center;
+}
+.support-ticket-description{
+  margin-top:7px;
+  white-space:pre-wrap;
+  color:#344054;
+}
+@media(max-width:600px){
+  .patient-subtabs{grid-template-columns:1fr 1fr 1fr;gap:6px}
+  .patient-subtab{min-height:44px;padding:7px 5px;font-size:.78rem}
+  .patient-section-hero{align-items:flex-start;flex-direction:column}
+}
