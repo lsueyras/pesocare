@@ -1186,3 +1186,15 @@ input[data-date-cl].date-invalid{
   .clinical-reason{align-items:stretch;flex-direction:column}
   .clinical-reason button{width:100%}
 }
+
+/* BodyCare V16.1 — robustez selector de fecha */
+.date-picker-day{
+  touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;
+  position:relative;
+  z-index:1;
+}
+.date-picker-grid{
+  position:relative;
+  z-index:2;
+}

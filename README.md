@@ -363,3 +363,12 @@ https://lsueyras.github.io/pesocare/
 - El médico puede marcar alertas persistentes como revisadas.
 - Push + Realtime de `CLINICAL_ALERT`.
 - Ninguna bandera constituye diagnóstico ni reemplaza juicio clínico.
+
+
+## BodyCare V16.1 — Corrección selector de fecha
+- La selección de calendario guarda simultáneamente DD/MM/AAAA visible e ISO YYYY-MM-DD interno.
+- El campo se resuelve por ID al elegir una fecha, evitando referencias obsoletas tras renders.
+- Los botones de día y “Hoy” aplican la selección antes de cerrar el calendario.
+- Se disparan eventos input + change y se restaura el valor seleccionado después de cada evento.
+- `requireDateCL` puede recuperar la fecha ISO interna aun ante inconsistencias de Safari/iPhone.
+- No cambia Supabase ni la lógica V16 de priorización.

@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='16.0';
+const APP_VERSION='16.1';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -65,15 +65,18 @@ function normalizeDateCLInput(el){
   if(!el)return true;
   const raw=el.value.trim();
   if(!raw){
+    delete el.dataset.isoDate;
     el.classList.remove('date-invalid');
     return true;
   }
   const iso=parseDateCL(raw);
   if(!iso){
+    delete el.dataset.isoDate;
     el.classList.add('date-invalid');
     return false;
   }
   el.value=formatDateCL(iso);
+  el.dataset.isoDate=iso;
   el.classList.remove('date-invalid');
   return true;
 }
@@ -86,6 +89,7 @@ function bindDateCLInputs(root=document){
 
     el.addEventListener('blur',()=>normalizeDateCLInput(el));
     el.addEventListener('input',()=>{
+      delete el.dataset.isoDate;
       el.classList.remove('date-invalid');
       let v=el.value.replace(/\D/g,'').slice(0,8);
       if(v.length>4)v=v.slice(0,2)+'/'+v.slice(2,4)+'/'+v.slice(4);
@@ -100,17 +104,25 @@ function requireDateCL(id,label,allowEmpty=false){
   if(!el)return allowEmpty?null:'';
   const raw=el.value.trim();
   if(!raw&&allowEmpty)return null;
-  const iso=parseDateCL(raw);
+
+  const visibleIso=parseDateCL(raw);
+  const storedIso=/^\d{4}-\d{2}-\d{2}$/.test(el.dataset.isoDate||'')?el.dataset.isoDate:null;
+  const iso=visibleIso||storedIso;
+
   if(!iso){
     el.classList.add('date-invalid');
-    throw new Error(`${label}: usa el formato DD/MM/AAAA.`);
+    throw new Error(`${label}: selecciona una fecha o usa el formato DD/MM/AAAA.`);
   }
+
+  el.value=formatDateCL(iso);
+  el.dataset.isoDate=iso;
   el.classList.remove('date-invalid');
   return iso;
 }
 
 
 let datePickerTarget=null;
+let datePickerTargetId=null;
 let datePickerMonth=null;
 
 function calendarButtonSvg(){
@@ -157,13 +169,10 @@ function ensureDatePicker(){
     datePickerMonth=new Date(Date.UTC(datePickerMonth.getUTCFullYear(),datePickerMonth.getUTCMonth()+1,1));
     renderDatePicker();
   });
-  document.getElementById('datePickerToday').addEventListener('click',()=>{
-    if(!datePickerTarget)return;
+  document.getElementById('datePickerToday').addEventListener('click',e=>{
+    e.preventDefault();
     const iso=today();
-    datePickerTarget.value=formatDateCL(iso);
-    datePickerTarget.classList.remove('date-invalid');
-    datePickerTarget.dispatchEvent(new Event('change',{bubbles:true}));
-    closeDatePicker();
+    if(applyDatePickerSelection(iso))closeDatePicker();
   });
   document.getElementById('datePickerClose').addEventListener('click',closeDatePicker);
 
@@ -174,11 +183,41 @@ function ensureDatePicker(){
   return overlay;
 }
 
+function currentDatePickerTarget(){
+  if(datePickerTargetId){
+    const live=document.getElementById(datePickerTargetId);
+    if(live)return live;
+  }
+  return datePickerTarget&&datePickerTarget.isConnected?datePickerTarget:null;
+}
+
+function applyDatePickerSelection(iso){
+  const target=currentDatePickerTarget();
+  if(!target||!/^\d{4}-\d{2}-\d{2}$/.test(String(iso||'')))return false;
+
+  target.dataset.isoDate=iso;
+  target.value=formatDateCL(iso);
+  target.classList.remove('date-invalid');
+
+  // Fire both events because control availability listens to change,
+  // while other views can listen to input.
+  target.dispatchEvent(new Event('input',{bubbles:true}));
+  // input handler removes isoDate while typing, restore it after the event.
+  target.dataset.isoDate=iso;
+  target.value=formatDateCL(iso);
+  target.dispatchEvent(new Event('change',{bubbles:true}));
+  target.dataset.isoDate=iso;
+  target.value=formatDateCL(iso);
+  return true;
+}
+
 function openDatePicker(input){
   if(!input)return;
   datePickerTarget=input;
+  datePickerTargetId=input.id||null;
 
-  const current=parseDateCL(input.value);
+  const current=parseDateCL(input.value)||input.dataset.isoDate||null;
+  if(current)input.dataset.isoDate=current;
   const base=current?parseDate(current):new Date();
   datePickerMonth=new Date(Date.UTC(base.getUTCFullYear?base.getUTCFullYear():base.getFullYear(), base.getUTCMonth?base.getUTCMonth():base.getMonth(), 1));
 
@@ -195,6 +234,7 @@ function closeDatePicker(){
     overlay.setAttribute('aria-hidden','true');
   }
   datePickerTarget=null;
+  datePickerTargetId=null;
 }
 
 function renderDatePicker(){
@@ -213,7 +253,8 @@ function renderDatePicker(){
   const first=new Date(Date.UTC(year,month,1));
   const lastDay=new Date(Date.UTC(year,month+1,0)).getUTCDate();
   const mondayIndex=(first.getUTCDay()+6)%7; // Monday = 0
-  const selectedIso=datePickerTarget?parseDateCL(datePickerTarget.value):null;
+  const target=currentDatePickerTarget();
+  const selectedIso=target?(parseDateCL(target.value)||target.dataset.isoDate||null):null;
   const todayIso=today();
 
   let html='';
@@ -231,12 +272,10 @@ function renderDatePicker(){
 
   grid.innerHTML=html;
   grid.querySelectorAll('[data-date-iso]').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      if(!datePickerTarget)return;
-      datePickerTarget.value=formatDateCL(btn.dataset.dateIso);
-      datePickerTarget.classList.remove('date-invalid');
-      datePickerTarget.dispatchEvent(new Event('change',{bubbles:true}));
-      closeDatePicker();
+    btn.addEventListener('click',e=>{
+      e.preventDefault();
+      e.stopPropagation();
+      if(applyDatePickerSelection(btn.dataset.dateIso))closeDatePicker();
     });
   });
 }
@@ -244,6 +283,8 @@ function renderDatePicker(){
 function enhanceDateCLControl(input){
   if(!input||input.dataset.calendarEnhanced==='1')return;
   input.dataset.calendarEnhanced='1';
+  const initialIso=parseDateCL(input.value);
+  if(initialIso)input.dataset.isoDate=initialIso;
 
   const parent=input.parentElement;
   let wrap;
@@ -3214,7 +3255,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.0'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.1'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
