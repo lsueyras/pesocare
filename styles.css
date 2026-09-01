@@ -1198,3 +1198,82 @@ input[data-date-cl].date-invalid{
   position:relative;
   z-index:2;
 }
+
+
+/* BodyCare V16.2 — selector de fecha nativo + orden del formulario */
+.control-grid{
+  align-items:start !important;
+}
+.control-grid > div{
+  align-self:start;
+}
+.control-form .date-cl-control,
+.control-form .time-control-frame{
+  width:100% !important;
+  max-width:100% !important;
+  min-width:0 !important;
+  height:50px;
+  box-sizing:border-box;
+}
+.control-form .date-cl-control input[data-date-cl]{
+  height:50px;
+  min-height:50px;
+  box-sizing:border-box;
+}
+.control-slot-info-full{
+  width:100%;
+  margin-top:7px;
+}
+
+/* The visible field remains DD/MM/AAAA. This native input is transparent and
+   only exists to invoke the browser/iOS calendar reliably. */
+.date-cl-control{
+  position:relative;
+  overflow:visible;
+}
+.date-cl-button{
+  pointer-events:none;
+  z-index:2;
+}
+.date-native-picker{
+  position:absolute !important;
+  top:0 !important;
+  right:0 !important;
+  z-index:3 !important;
+  width:48px !important;
+  min-width:48px !important;
+  max-width:48px !important;
+  height:100% !important;
+  min-height:100% !important;
+  margin:0 !important;
+  padding:0 !important;
+  border:0 !important;
+  opacity:0 !important;
+  cursor:pointer !important;
+  appearance:auto !important;
+  -webkit-appearance:auto !important;
+}
+.date-native-picker::-webkit-calendar-picker-indicator{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  margin:0;
+  padding:0;
+  cursor:pointer;
+}
+
+@media(min-width:701px){
+  #doctorControlForm .control-grid{
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;
+    column-gap:16px;
+  }
+  #doctorControlForm .control-grid > div{
+    width:100%;
+    min-width:0;
+  }
+  #doctorControlForm .time-control-frame,
+  #doctorControlForm .date-cl-control{
+    width:100% !important;
+  }
+}

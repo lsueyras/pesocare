@@ -372,3 +372,12 @@ https://lsueyras.github.io/pesocare/
 - Se disparan eventos input + change y se restaura el valor seleccionado después de cada evento.
 - `requireDateCL` puede recuperar la fecha ISO interna aun ante inconsistencias de Safari/iPhone.
 - No cambia Supabase ni la lógica V16 de priorización.
+
+
+## BodyCare V16.2 — Fecha nativa y layout de controles
+- Campo visible mantiene DD/MM/AAAA.
+- Ícono calendario abre selector nativo del navegador/iOS mediante input date transparente.
+- Selección nativa sincroniza el valor visible y el ISO interno.
+- Fecha y Hora se alinean desde arriba en escritorio.
+- Información del tamaño de bloque sale de la columna Hora y pasa a una línea independiente.
+- Fecha y Hora quedan con altura y ancho equivalentes.

@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='16.1';
+const APP_VERSION='16.2';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -283,6 +283,7 @@ function renderDatePicker(){
 function enhanceDateCLControl(input){
   if(!input||input.dataset.calendarEnhanced==='1')return;
   input.dataset.calendarEnhanced='1';
+
   const initialIso=parseDateCL(input.value);
   if(initialIso)input.dataset.isoDate=initialIso;
 
@@ -298,13 +299,43 @@ function enhanceDateCLControl(input){
     wrap.appendChild(input);
   }
 
-  const button=document.createElement('button');
-  button.type='button';
+  // Decorative calendar button. The transparent native date input above it
+  // receives the click, so desktop and iOS use their own reliable picker.
+  const button=document.createElement('span');
   button.className='date-cl-button';
-  button.setAttribute('aria-label','Abrir calendario');
+  button.setAttribute('aria-hidden','true');
   button.innerHTML=calendarButtonSvg();
-  button.addEventListener('click',()=>openDatePicker(input));
   wrap.appendChild(button);
+
+  const native=document.createElement('input');
+  native.type='date';
+  native.className='date-native-picker';
+  native.tabIndex=-1;
+  native.setAttribute('aria-label','Seleccionar fecha');
+
+  const syncNativeFromVisible=()=>{
+    const iso=parseDateCL(input.value)||input.dataset.isoDate||today();
+    if(/^\d{4}-\d{2}-\d{2}$/.test(iso))native.value=iso;
+  };
+
+  native.addEventListener('pointerdown',syncNativeFromVisible);
+  native.addEventListener('mousedown',syncNativeFromVisible);
+  native.addEventListener('touchstart',syncNativeFromVisible,{passive:true});
+  native.addEventListener('change',()=>{
+    const iso=native.value;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(iso))return;
+
+    input.dataset.isoDate=iso;
+    input.value=formatDateCL(iso);
+    input.classList.remove('date-invalid');
+
+    // Change is enough for agenda availability; input keeps other views in sync.
+    input.dispatchEvent(new Event('change',{bubbles:true}));
+    input.dataset.isoDate=iso;
+    input.value=formatDateCL(iso);
+  });
+
+  wrap.appendChild(native);
 }
 
 const parseDecimal=value=>{
@@ -2342,9 +2373,9 @@ function patientDoctorView(){
               <div class="time-control-frame">
                 <input id="patientControlTime" type="time" required>
               </div>
-              <div id="patientControlSlotInfo" class="slot-info">Bloques definidos por el médico: ${validControlSlotMinutes(linkedDoctorProfiles.find(d=>d.user_id===selectedControlDoctor)?.control_slot_minutes||30)} minutos.</div>
             </div>
           </div>
+          <div id="patientControlSlotInfo" class="slot-info control-slot-info-full">Bloques definidos por el médico: ${validControlSlotMinutes(linkedDoctorProfiles.find(d=>d.user_id===selectedControlDoctor)?.control_slot_minutes||30)} minutos.</div>
           <div id="patientControlAvailability" class="control-availability"></div>
           <label for="patientControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>
           <textarea id="patientControlNotes" rows="2" maxlength="1000" placeholder="Ej: control de evolución"></textarea>
@@ -3255,7 +3286,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.1'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.2'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -4072,9 +4103,9 @@ function doctorPatientDetailView(){
             <div class="time-control-frame">
               <input id="doctorControlTime" type="time" required>
             </div>
-            <div id="doctorControlSlotInfo" class="slot-info">Bloques definidos en tu perfil: ${validControlSlotMinutes(doctorProfile?.control_slot_minutes||30)} minutos.</div>
           </div>
         </div>
+        <div id="doctorControlSlotInfo" class="slot-info control-slot-info-full">Bloques definidos en tu perfil: ${validControlSlotMinutes(doctorProfile?.control_slot_minutes||30)} minutos.</div>
         <div id="doctorControlAvailability" class="control-availability"></div>
         <label for="doctorControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>
         <textarea id="doctorControlNotes" rows="2" maxlength="1000" placeholder="Ej: control de evolución"></textarea>
