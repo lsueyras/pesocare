@@ -249,3 +249,12 @@ https://lsueyras.github.io/pesocare/
 - El paciente continúa recibiendo la eliminación por Realtime.
 - Si el backend rechaza la operación, BodyCare restaura automáticamente la indicación.
 - La reconciliación posterior actualiza solo prescripciones y nunca toca mensajes.
+
+
+## BodyCare V14.10 — Fechas Chile
+- Todos los campos visibles de fecha usan DD/MM/AAAA.
+- Se elimina la dependencia del formato nativo de Safari/Chrome.
+- Internamente se mantiene YYYY-MM-DD para Supabase y cálculos.
+- Validación de fechas reales.
+- Ingreso numérico con `/` automático.
+- Idioma de documento: es-CL.

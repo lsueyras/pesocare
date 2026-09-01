@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='14.9';
+const APP_VERSION='14.10';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
@@ -35,6 +35,68 @@ let doctorPrescriptionsSyncing=false, doctorPrescriptionsSyncPending=false;
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const parseDate=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(Date.UTC(y,m-1,d))};
 const fmt=s=>{if(!s)return '—';const[y,m,d]=s.split('-');return `${d}/${m}/${y}`};
+const formatDateCL=iso=>{
+  if(!iso)return '';
+  const m=String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m?`${m[3]}/${m[2]}/${m[1]}`:'';
+};
+
+const parseDateCL=value=>{
+  const raw=String(value||'').trim();
+  const m=raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(!m)return null;
+  const day=Number(m[1]),month=Number(m[2]),year=Number(m[3]);
+  const dt=new Date(Date.UTC(year,month-1,day));
+  if(dt.getUTCFullYear()!==year||dt.getUTCMonth()!==month-1||dt.getUTCDate()!==day)return null;
+  return `${String(year).padStart(4,'0')}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+};
+
+function normalizeDateCLInput(el){
+  if(!el)return true;
+  const raw=el.value.trim();
+  if(!raw){
+    el.classList.remove('date-invalid');
+    return true;
+  }
+  const iso=parseDateCL(raw);
+  if(!iso){
+    el.classList.add('date-invalid');
+    return false;
+  }
+  el.value=formatDateCL(iso);
+  el.classList.remove('date-invalid');
+  return true;
+}
+
+function bindDateCLInputs(root=document){
+  root.querySelectorAll('[data-date-cl]').forEach(el=>{
+    if(el.dataset.dateBound==='1')return;
+    el.dataset.dateBound='1';
+    el.addEventListener('blur',()=>normalizeDateCLInput(el));
+    el.addEventListener('input',()=>{
+      el.classList.remove('date-invalid');
+      let v=el.value.replace(/\D/g,'').slice(0,8);
+      if(v.length>4)v=v.slice(0,2)+'/'+v.slice(2,4)+'/'+v.slice(4);
+      else if(v.length>2)v=v.slice(0,2)+'/'+v.slice(2);
+      el.value=v;
+    });
+  });
+}
+
+function requireDateCL(id,label,allowEmpty=false){
+  const el=document.getElementById(id);
+  if(!el)return allowEmpty?null:'';
+  const raw=el.value.trim();
+  if(!raw&&allowEmpty)return null;
+  const iso=parseDateCL(raw);
+  if(!iso){
+    el.classList.add('date-invalid');
+    throw new Error(`${label}: usa el formato DD/MM/AAAA.`);
+  }
+  el.classList.remove('date-invalid');
+  return iso;
+}
+
 const parseDecimal=value=>{
   const normalized=String(value??'').trim().replace(/\s/g,'').replace(',','.');
   if(!/^\d+(\.\d{1,2})?$/.test(normalized)) return NaN;
@@ -320,7 +382,7 @@ function prescriptionFormMarkup(editing){
 
       <div>
         <label>Fecha inicio</label>
-        <input id="rxStart" type="date" value="${editing?.start_date||today()}">
+        <input id="rxStart" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(editing?.start_date||today())}">
       </div>
 
       <div>
@@ -1346,6 +1408,7 @@ function render(){
   }
   setTimeout(startRealtime,0);
   setTimeout(startContextSync,0);
+  setTimeout(()=>bindDateCLInputs(),0);
   return result;
 }
 
@@ -1379,8 +1442,8 @@ function initialProfileView(){
       <form id="profileForm">
         <div class="grid">
           <div><label>Nombre completo</label><input id="name" required></div>
-          <div><label>Fecha de nacimiento</label><input id="birth" type="date"></div>
-          <div><label>Fecha de inicio</label><input id="start" type="date" value="${today()}" required></div>
+          <div><label>Fecha de nacimiento</label><input id="birth" type="text" inputmode="numeric" autocomplete="bday" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl></div>
+          <div><label>Fecha de inicio</label><input id="start" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(today())}" required></div>
           <div><label>Duración del seguimiento (semanas)</label><input id="weeks" type="number" min="1" max="104" value="16" required></div>
           <div><label>Peso inicial (kg)</label><input id="initial" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 82,45" required></div>
           <div><label>Peso meta (kg)</label><input id="target" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 70,00"></div>
@@ -1391,6 +1454,7 @@ function initialProfileView(){
       </form>
     </section>`);
   document.getElementById('profileForm').addEventListener('submit',createProfile);
+  bindDateCLInputs();
   bindCommonHeader();
 }
 
@@ -1417,11 +1481,20 @@ async function createProfile(e){
     return;
   }
 
+  let birthDate,startDate;
+  try{
+    birthDate=requireDateCL('birth','Fecha de nacimiento',true);
+    startDate=requireDateCL('start','Fecha de inicio');
+  }catch(err){
+    msg.textContent=err.message;
+    return;
+  }
+
   const p={
     user_id:currentUser.id,
     full_name:document.getElementById('name').value.trim(),
-    birth_date:document.getElementById('birth').value||null,
-    start_date:document.getElementById('start').value,
+    birth_date:birthDate,
+    start_date:startDate,
     planned_weeks:Number(document.getElementById('weeks').value),
     initial_weight_kg:initialWeight,
     target_weight_kg:targetWeight,
@@ -1550,7 +1623,7 @@ function dashboardView(){
       <h2 class="section-title">Registrar peso</h2>
       <p class="muted">La fecha de hoy viene propuesta. Puedes cambiarla para registrar un dato anterior.</p>
       <form id="weightForm"><div class="record-grid">
-        <div class="record-field"><label for="date">Fecha</label><div class="control-frame"><input id="date" type="date" value="${today()}" required></div></div>
+        <div class="record-field"><label for="date">Fecha</label><div class="control-frame"><input id="date" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(today())}" required></div></div>
         <div class="record-field"><label for="weight">Peso (kg)</label><div class="control-frame"><input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 94,85" required></div></div>
         <div class="record-field"><label for="abdomen">Circunferencia abdominal (cm)</label><div class="control-frame"><input id="abdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 111,50" required></div></div>
       </div><button class="primary" style="margin-top:12px">Guardar registro</button><p id="weightMsg" class="error"></p></form>
@@ -1564,6 +1637,7 @@ function dashboardView(){
     </section>`);
 
   document.getElementById('weightForm').addEventListener('submit',addWeight);
+  bindDateCLInputs();
   document.getElementById('reportBtn').addEventListener('click',generateReport);
   document.getElementById('editPlan').addEventListener('click',editPlan);
   bindCommonHeader();
@@ -1963,7 +2037,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.9'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.10'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -2458,6 +2532,7 @@ function bindDoctorPrescriptionForm(){
   const editing=doctorPatientDetail?.prescriptions?.find(rx=>rx.id===editingPrescriptionId)||null;
   document.getElementById('doctorPrescriptionForm')?.addEventListener('submit',saveDoctorPrescription);
   bindPrescriptionCatalog(editing);
+  bindDateCLInputs();
   document.getElementById('cancelPrescriptionEdit')?.addEventListener('click',()=>{
     editingPrescriptionId=null;
     renderDoctorPrescriptionForm();
@@ -2525,6 +2600,14 @@ async function saveDoctorPrescription(e){
   const medicationSelect=document.getElementById('rxMedicationSelect');
   const selectedEntry=WEIGHT_RX_CATALOG.find(x=>x.id===medicationSelect?.value)||null;
 
+  let rxStartDate;
+  try{
+    rxStartDate=requireDateCL('rxStart','Fecha de inicio de la indicación',true);
+  }catch(err){
+    alert(err.message);
+    return;
+  }
+
   const payload={
     medication_name:medicationSelect?.value===RX_OTHER
       ? document.getElementById('rxMedicationOther')?.value.trim()
@@ -2533,7 +2616,7 @@ async function saveDoctorPrescription(e){
     route_text:rxResolvedValue('rxRouteSelect','rxRouteOther')||null,
     dose_text:rxResolvedValue('rxDoseSelect','rxDoseOther'),
     frequency_text:rxResolvedValue('rxFrequencySelect','rxFrequencyOther'),
-    start_date:document.getElementById('rxStart').value||null,
+    start_date:rxStartDate,
     duration_text:rxResolvedValue('rxDurationSelect','rxDurationOther')||null,
     instructions:document.getElementById('rxInstructions').value.trim()||null
   };
@@ -2863,11 +2946,18 @@ async function adminDeleteUser(id){
 
 async function addWeight(e){
   e.preventDefault();
-  const measured_on=document.getElementById('date').value;
   const weight_kg=parseDecimal(document.getElementById('weight').value);
   const abdominal_circumference_cm=parseDecimal(document.getElementById('abdomen').value);
   const msg=document.getElementById('weightMsg');
   msg.textContent='';
+
+  let measured_on;
+  try{
+    measured_on=requireDateCL('date','Fecha del registro');
+  }catch(err){
+    msg.textContent=err.message;
+    return;
+  }
 
   if(parseDate(measured_on)<parseDate(profile.start_date)){
     msg.textContent='La fecha no puede ser anterior al inicio del seguimiento.';

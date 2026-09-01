@@ -533,3 +533,13 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
 #doctorPrescriptionList .prescription-card{
   transition:opacity .18s ease, transform .18s ease;
 }
+
+/* BodyCare V14.10 — fechas Chile DD/MM/AAAA */
+input[data-date-cl]{
+  font-variant-numeric:tabular-nums;
+  letter-spacing:.01em;
+}
+input[data-date-cl].date-invalid{
+  border-color:#d92d20 !important;
+  box-shadow:0 0 0 3px rgba(217,45,32,.10);
+}
