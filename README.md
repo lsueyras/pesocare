@@ -282,3 +282,19 @@ https://lsueyras.github.io/pesocare/
 - Realtime se mantiene como canal principal mientras la app está abierta.
 - Push se dispara desde Supabase de forma asíncrona mediante pg_net + Edge Function.
 - VAPID private key y webhook token permanecen en Supabase Vault; solo la clave pública está en frontend.
+
+
+## BodyCare V15.1 — Controles compartidos
+- Médico y paciente pueden registrar un nuevo control con fecha y hora.
+- Fecha visible DD/MM/AAAA con calendario BodyCare.
+- Hora almacenada usando zona America/Santiago.
+- Observación opcional.
+- Control visible inmediatamente en ambos perfiles.
+- Notificación Realtime + Push al otro participante.
+- Ambos participantes pueden cancelar; no se elimina físicamente.
+- Estado SCHEDULED / CANCELLED con trazabilidad de creador y cancelación.
+- RPC dedicadas:
+  - bodycare_get_controls
+  - bodycare_create_control
+  - bodycare_cancel_control
+- Las notificaciones NEW_CONTROL y CONTROL_CANCELLED usan la preferencia de actualizaciones de seguimiento.

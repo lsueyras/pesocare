@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='15.0';
+const APP_VERSION='15.1';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -16,7 +16,7 @@ const SIGNUP_COOLDOWN_KEY='pesocare_signup_cooldown_until';
 const app=document.getElementById('app');
 let session=null, currentUser=null, profile=null, records=[];
 let account=null, roles=[], activePortal='PATIENT';
-let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], supportTickets=[];
+let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], patientControls=[], supportTickets=[];
 let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
 let adminUsers=[], adminTickets=[], adminLoaded=false;
 let editingPrescriptionId=null;
@@ -32,6 +32,8 @@ let patientMessagesSyncing=false, patientMessagesSyncPending=false;
 let patientPrescriptionsSyncing=false, patientPrescriptionsSyncPending=false;
 let doctorMessagesSyncing=false, doctorMessagesSyncPending=false;
 let doctorPrescriptionsSyncing=false, doctorPrescriptionsSyncPending=false;
+let patientControlsSyncing=false, patientControlsSyncPending=false;
+let doctorControlsSyncing=false, doctorControlsSyncPending=false;
 let notificationPreferences={push_enabled:true,messages:true,prescriptions:true,care_updates:true,support:true};
 let pushBrowserSubscription=null;
 let pushSettingsLoaded=false;
@@ -1158,7 +1160,9 @@ function notificationIcon(type){
     NEW_WEIGHT:'⚖️',
     NEW_PATIENT:'👤',
     SUPPORT:'🛠️',
-    PUSH_TEST:'🔔'
+    PUSH_TEST:'🔔',
+    NEW_CONTROL:'🗓️',
+    CONTROL_CANCELLED:'🚫'
   };
   return icons[type]||'🔔';
 }
@@ -1248,7 +1252,9 @@ function notificationDestinationLabel(n){
     NEW_WEIGHT:'Abrir paciente',
     NEW_PATIENT:'Ver pacientes',
     SUPPORT:'Abrir soporte',
-    PUSH_TEST:'Abrir BodyCare'
+    PUSH_TEST:'Abrir BodyCare',
+    NEW_CONTROL:'Ver control',
+    CONTROL_CANCELLED:'Ver controles'
   };
   return map[n.type]||'Abrir';
 }
@@ -1354,6 +1360,27 @@ async function openNotificationById(id){
     await loadData();render();
     setTimeout(()=>document.getElementById('patientPrescriptionList')?.scrollIntoView({behavior:'smooth',block:'center'}),120);
     return;
+  }
+
+  if(['NEW_CONTROL','CONTROL_CANCELLED'].includes(n.type)){
+    if(hasRole('DOCTOR') && n.related_user_id && n.related_user_id!==currentUser.id){
+      activePortal='DOCTOR';
+      localStorage.setItem('pesocare_active_portal','DOCTOR');
+      await openDoctorPatient(n.related_user_id);
+      setTimeout(()=>document.getElementById('doctorControlsSection')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
+      return;
+    }
+    if(hasRole('PATIENT')){
+      activePortal='PATIENT';
+      activePatientTab='DOCTOR';
+      localStorage.setItem('pesocare_active_portal','PATIENT');
+      localStorage.setItem('pesocare_patient_tab','DOCTOR');
+      if(n.related_user_id)localStorage.setItem('bodycare_selected_control_doctor',n.related_user_id);
+      await loadData();
+      render();
+      setTimeout(()=>document.getElementById('patientControlsSection')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
+      return;
+    }
   }
 
   if((n.type==='NEW_WEIGHT'||n.type==='NEW_PATIENT') && hasRole('DOCTOR')){
@@ -1535,6 +1562,15 @@ async function handleRealtimeNotification(n,fromFallback=false){
       }
       if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id){
         await syncDoctorPrescriptions(doctorPatientDetail.profile.user_id);
+      }
+    }
+
+    if(['NEW_CONTROL','CONTROL_CANCELLED'].includes(n.type)){
+      if(hasRole('PATIENT')&&activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
+        await syncPatientControls();
+      }
+      if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id===n.related_user_id){
+        await syncDoctorControls(n.related_user_id);
       }
     }
 
@@ -2096,12 +2132,14 @@ function dashboardView(){
 function patientDoctorView(){
   const selectedStored=localStorage.getItem('pesocare_selected_doctor');
   const selectedDoctor=linkedDoctorProfiles.some(d=>d.user_id===selectedStored)?selectedStored:(linkedDoctorProfiles[0]?.user_id||'');
+  const selectedControlStored=localStorage.getItem('bodycare_selected_control_doctor');
+  const selectedControlDoctor=linkedDoctorProfiles.some(d=>d.user_id===selectedControlStored)?selectedControlStored:(selectedDoctor||linkedDoctorProfiles[0]?.user_id||'');
 
   app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
     <section class="card patient-section-hero">
       <div>
         <h2 class="section-title">Mi médico</h2>
-        <div class="muted">Mensajes, indicaciones y profesionales autorizados en un solo lugar.</div>
+        <div class="muted">Controles, mensajes, indicaciones y profesionales autorizados en un solo lugar.</div>
       </div>
       <span class="realtime-pill"><i class="live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}"></i>Sincronización automática</span>
     </section>
@@ -2124,6 +2162,40 @@ function patientDoctorView(){
         <button class="secondary" type="submit">Vincular médico</button>
       </form>
       <p id="doctorLinkMsg" class="error"></p>
+    </section>
+
+    <section class="card" id="patientControlsSection">
+      <div class="card-head">
+        <div>
+          <h2 class="section-title">Controles</h2>
+          <div class="muted">Médico y paciente pueden registrar un nuevo control. El cambio queda compartido automáticamente.</div>
+        </div>
+      </div>
+      ${linkedDoctorProfiles.length?`
+        <form id="patientControlForm" class="control-form">
+          <div class="grid control-grid">
+            <div>
+              <label for="patientControlDoctorSelect">Médico</label>
+              <select id="patientControlDoctorSelect" required>
+                ${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}" ${d.user_id===selectedControlDoctor?'selected':''}>${esc(d.display_name||'Médico')}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label for="patientControlDate">Fecha</label>
+              <input id="patientControlDate" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(today())}" required>
+            </div>
+            <div>
+              <label for="patientControlTime">Hora</label>
+              <input id="patientControlTime" type="time" required>
+            </div>
+          </div>
+          <label for="patientControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>
+          <textarea id="patientControlNotes" rows="2" maxlength="1000" placeholder="Ej: control de evolución"></textarea>
+          <div class="form-actions"><button class="primary" type="submit">Registrar control</button></div>
+        </form>
+        <div id="patientControlSyncStatus" class="control-sync-status syncing"><span class="control-sync-dot"></span><span>Actualizando controles…</span></div>
+        <div id="patientControlList">${controlListMarkup(patientControls,'patient')}</div>`
+        :'<div class="empty-state">Vincula un médico para registrar controles compartidos.</div>'}
     </section>
 
     <section class="card">
@@ -2157,6 +2229,7 @@ function patientDoctorView(){
   bindPatientCare();
   renderPatientPrescriptionList();
   renderPatientMessageThread();
+  renderPatientControls();
   markVisibleMedicalNotifications();
 }
 
@@ -2444,6 +2517,318 @@ function doctorNameById(userId){
 }
 function linkForDoctor(userId){return careLinks.find(l=>l.doctor_user_id===userId)}
 
+
+function selectedPatientControlDoctorId(){
+  const select=document.getElementById('patientControlDoctorSelect');
+  if(select?.value)return select.value;
+  const stored=localStorage.getItem('bodycare_selected_control_doctor');
+  if(stored&&linkedDoctorProfiles.some(d=>d.user_id===stored))return stored;
+  return linkedDoctorProfiles[0]?.user_id||null;
+}
+
+function formatControlDateTime(value){
+  if(!value)return '—';
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return '—';
+  const date=new Intl.DateTimeFormat('es-CL',{
+    timeZone:'America/Santiago',
+    day:'2-digit',month:'2-digit',year:'numeric'
+  }).format(d);
+  const time=new Intl.DateTimeFormat('es-CL',{
+    timeZone:'America/Santiago',
+    hour:'2-digit',minute:'2-digit',hour12:false
+  }).format(d);
+  return `${date} · ${time}`;
+}
+
+function controlCreatorLabel(c,context){
+  if(c.created_by_user_id===currentUser.id)return 'Registrado por ti';
+  return context==='doctor'?'Registrado por paciente':'Registrado por médico';
+}
+
+function controlListMarkup(rows,context){
+  const list=[...(rows||[])].sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
+  if(!list.length)return '<div class="empty-state">Aún no hay controles registrados.</div>';
+
+  return `<div class="control-list">${list.map(c=>`
+    <div class="control-card ${c.status==='CANCELLED'?'cancelled':''}">
+      <div class="control-card-main">
+        <div class="control-date">${esc(formatControlDateTime(c.scheduled_at))}</div>
+        <div class="control-meta">
+          <span class="control-status ${c.status==='CANCELLED'?'cancelled':'scheduled'}">${c.status==='CANCELLED'?'Cancelado':'Agendado'}</span>
+          <span>${esc(controlCreatorLabel(c,context))}</span>
+        </div>
+        ${c.notes?`<div class="control-notes">${esc(c.notes)}</div>`:''}
+      </div>
+      ${c.status==='SCHEDULED'?`<button type="button" class="secondary small-btn control-cancel-btn" data-cancel-control="${c.id}" data-control-context="${context}">Cancelar</button>`:''}
+    </div>`).join('')}</div>`;
+}
+
+function setControlSyncStatus(context,state,text){
+  const el=document.getElementById(context==='patient'?'patientControlSyncStatus':'doctorControlSyncStatus');
+  if(!el)return;
+  el.className=`control-sync-status ${state||''}`;
+  const label=el.querySelector('span:last-child');
+  if(label)label.textContent=text;
+}
+
+function bindControlCancelButtons(root=document){
+  root.querySelectorAll('[data-cancel-control]').forEach(btn=>{
+    btn.addEventListener('click',()=>cancelSharedControl(btn.dataset.cancelControl,btn.dataset.controlContext));
+  });
+}
+
+function renderPatientControls(){
+  const el=document.getElementById('patientControlList');
+  if(!el)return;
+  el.innerHTML=controlListMarkup(patientControls,'patient');
+  bindControlCancelButtons(el);
+}
+
+function renderDoctorControls(){
+  const el=document.getElementById('doctorControlList');
+  if(!el||!doctorPatientDetail)return;
+  el.innerHTML=controlListMarkup(doctorPatientDetail.controls||[],'doctor');
+  bindControlCancelButtons(el);
+}
+
+async function syncPatientControls(){
+  if(!hasRole('PATIENT'))return;
+  if(patientControlsSyncing){
+    patientControlsSyncPending=true;
+    return;
+  }
+
+  const doctorId=selectedPatientControlDoctorId();
+  if(!doctorId){
+    patientControls=[];
+    renderPatientControls();
+    return;
+  }
+
+  patientControlsSyncing=true;
+  setControlSyncStatus('patient','syncing','Actualizando controles…');
+
+  try{
+    do{
+      patientControlsSyncPending=false;
+      const requestedDoctor=selectedPatientControlDoctorId();
+      if(!requestedDoctor)break;
+
+      const rows=await dbRpc('bodycare_get_controls',{
+        p_doctor_user_id:requestedDoctor,
+        p_patient_user_id:currentUser.id
+      });
+
+      if(selectedPatientControlDoctorId()===requestedDoctor){
+        patientControls=rows||[];
+        renderPatientControls();
+        setControlSyncStatus(
+          'patient','ok',
+          patientControls.length?`Sincronizado · ${patientControls.length} control${patientControls.length===1?'':'es'}`:'Sin controles registrados'
+        );
+      }
+    }while(patientControlsSyncPending);
+  }catch(err){
+    console.warn('Patient controls sync',err);
+    setControlSyncStatus('patient','error','No fue posible cargar los controles. Toca aquí para reintentar.');
+  }finally{
+    patientControlsSyncing=false;
+  }
+}
+
+async function syncDoctorControls(patientId){
+  if(!hasRole('DOCTOR')||!patientId)return;
+  if(doctorControlsSyncing){
+    doctorControlsSyncPending=true;
+    return;
+  }
+
+  doctorControlsSyncing=true;
+  setControlSyncStatus('doctor','syncing','Actualizando controles…');
+
+  try{
+    do{
+      doctorControlsSyncPending=false;
+      const rows=await dbRpc('bodycare_get_controls',{
+        p_doctor_user_id:currentUser.id,
+        p_patient_user_id:patientId
+      });
+
+      if(doctorPatientDetail?.profile?.user_id===patientId){
+        doctorPatientDetail.controls=rows||[];
+        renderDoctorControls();
+        setControlSyncStatus(
+          'doctor','ok',
+          doctorPatientDetail.controls.length?`Sincronizado · ${doctorPatientDetail.controls.length} control${doctorPatientDetail.controls.length===1?'':'es'}`:'Sin controles registrados'
+        );
+      }
+    }while(doctorControlsSyncPending);
+  }catch(err){
+    console.warn('Doctor controls sync',err);
+    setControlSyncStatus('doctor','error','No fue posible cargar los controles. Toca aquí para reintentar.');
+  }finally{
+    doctorControlsSyncing=false;
+  }
+}
+
+async function createPatientControl(e){
+  e.preventDefault();
+  const doctorId=document.getElementById('patientControlDoctorSelect')?.value;
+  if(!doctorId)return;
+
+  let controlDate;
+  try{
+    controlDate=requireDateCL('patientControlDate','Fecha del control');
+  }catch(err){
+    alert(err.message);
+    return;
+  }
+
+  const controlTime=document.getElementById('patientControlTime')?.value;
+  if(!controlTime){
+    alert('Selecciona la hora del control.');
+    return;
+  }
+
+  const notes=document.getElementById('patientControlNotes')?.value.trim()||null;
+  const button=e.submitter||e.target.querySelector('button[type="submit"]');
+  if(button)button.disabled=true;
+  setControlSyncStatus('patient','syncing','Registrando control…');
+
+  try{
+    const rows=await dbRpc('bodycare_create_control',{
+      p_doctor_user_id:doctorId,
+      p_patient_user_id:currentUser.id,
+      p_control_date:controlDate,
+      p_control_time:controlTime,
+      p_notes:notes
+    });
+    const saved=Array.isArray(rows)?rows[0]:rows;
+    if(!saved?.id)throw new Error('No se recibió confirmación del control.');
+
+    patientControls=[
+      ...patientControls.filter(c=>c.id!==saved.id),
+      saved
+    ].sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
+
+    renderPatientControls();
+    document.getElementById('patientControlNotes').value='';
+    setControlSyncStatus('patient','ok','Control registrado y compartido');
+    showToast('Control registrado','Tu médico recibirá la actualización automáticamente.','NEW_CONTROL');
+    syncPatientControls().catch(()=>{});
+  }catch(err){
+    setControlSyncStatus('patient','error','No se pudo registrar el control.');
+    alert(err.message);
+  }finally{
+    if(button)button.disabled=false;
+  }
+}
+
+async function createDoctorControl(e){
+  e.preventDefault();
+  const patientId=doctorPatientDetail?.profile?.user_id;
+  if(!patientId)return;
+
+  let controlDate;
+  try{
+    controlDate=requireDateCL('doctorControlDate','Fecha del control');
+  }catch(err){
+    alert(err.message);
+    return;
+  }
+
+  const controlTime=document.getElementById('doctorControlTime')?.value;
+  if(!controlTime){
+    alert('Selecciona la hora del control.');
+    return;
+  }
+
+  const notes=document.getElementById('doctorControlNotes')?.value.trim()||null;
+  const button=e.submitter||e.target.querySelector('button[type="submit"]');
+  if(button)button.disabled=true;
+  setControlSyncStatus('doctor','syncing','Registrando control…');
+
+  try{
+    const rows=await dbRpc('bodycare_create_control',{
+      p_doctor_user_id:currentUser.id,
+      p_patient_user_id:patientId,
+      p_control_date:controlDate,
+      p_control_time:controlTime,
+      p_notes:notes
+    });
+    const saved=Array.isArray(rows)?rows[0]:rows;
+    if(!saved?.id)throw new Error('No se recibió confirmación del control.');
+
+    doctorPatientDetail.controls=[
+      ...(doctorPatientDetail.controls||[]).filter(c=>c.id!==saved.id),
+      saved
+    ].sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
+
+    renderDoctorControls();
+    document.getElementById('doctorControlNotes').value='';
+    setControlSyncStatus('doctor','ok','Control registrado y compartido');
+    showToast('Control registrado','El paciente recibirá la actualización automáticamente.','NEW_CONTROL');
+    syncDoctorControls(patientId).catch(()=>{});
+  }catch(err){
+    setControlSyncStatus('doctor','error','No se pudo registrar el control.');
+    alert(err.message);
+  }finally{
+    if(button)button.disabled=false;
+  }
+}
+
+async function cancelSharedControl(id,context){
+  const source=context==='doctor'?(doctorPatientDetail?.controls||[]):patientControls;
+  const item=source.find(c=>c.id===id);
+  if(!item||item.status==='CANCELLED')return;
+
+  if(!confirm(`¿Cancelar el control del ${formatControlDateTime(item.scheduled_at)}? El otro usuario será notificado.`))return;
+
+  const previous=[...source];
+  const optimistic={...item,status:'CANCELLED',cancelled_at:new Date().toISOString(),cancelled_by_user_id:currentUser.id};
+
+  if(context==='doctor'){
+    doctorPatientDetail.controls=source.map(c=>c.id===id?optimistic:c);
+    renderDoctorControls();
+    setControlSyncStatus('doctor','syncing','Cancelando control…');
+  }else{
+    patientControls=source.map(c=>c.id===id?optimistic:c);
+    renderPatientControls();
+    setControlSyncStatus('patient','syncing','Cancelando control…');
+  }
+
+  try{
+    const rows=await dbRpc('bodycare_cancel_control',{p_control_id:id});
+    const saved=Array.isArray(rows)?rows[0]:rows;
+
+    if(context==='doctor'){
+      doctorPatientDetail.controls=(doctorPatientDetail.controls||[]).map(c=>c.id===id?(saved||optimistic):c);
+      renderDoctorControls();
+      setControlSyncStatus('doctor','ok','Control cancelado');
+      syncDoctorControls(doctorPatientDetail.profile.user_id).catch(()=>{});
+    }else{
+      patientControls=patientControls.map(c=>c.id===id?(saved||optimistic):c);
+      renderPatientControls();
+      setControlSyncStatus('patient','ok','Control cancelado');
+      syncPatientControls().catch(()=>{});
+    }
+
+    showToast('Control cancelado','La otra persona recibió la actualización.','CONTROL_CANCELLED');
+  }catch(err){
+    if(context==='doctor'){
+      doctorPatientDetail.controls=previous;
+      renderDoctorControls();
+      setControlSyncStatus('doctor','error','No se pudo cancelar. Se restauró el control.');
+    }else{
+      patientControls=previous;
+      renderPatientControls();
+      setControlSyncStatus('patient','error','No se pudo cancelar. Se restauró el control.');
+    }
+    alert(err.message);
+  }
+}
+
 function bindPatientCare(){
   document.getElementById('linkDoctorForm')?.addEventListener('submit',async e=>{
     e.preventDefault();
@@ -2477,6 +2862,16 @@ function bindPatientCare(){
   document.getElementById('patientChatSyncStatus')?.addEventListener('click',()=>syncPatientMessages());
   document.getElementById('patientPrescriptionSyncStatus')?.addEventListener('click',()=>syncPatientPrescriptions());
 
+  document.getElementById('patientControlDoctorSelect')?.addEventListener('change',e=>{
+    localStorage.setItem('bodycare_selected_control_doctor',e.target.value);
+    patientControls=[];
+    renderPatientControls();
+    syncPatientControls();
+  });
+  document.getElementById('patientControlForm')?.addEventListener('submit',createPatientControl);
+  document.getElementById('patientControlSyncStatus')?.addEventListener('click',()=>syncPatientControls());
+  bindDateCLInputs();
+
   document.getElementById('supportForm')?.addEventListener('submit',async e=>{
     e.preventDefault();
     const msg=document.getElementById('supportMsg');msg.textContent='';
@@ -2485,7 +2880,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.0'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.1'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -2556,6 +2951,7 @@ function renderPatientPrescriptionList(){
 
 function markVisibleMedicalNotifications(){
   const selectedDoctor=document.getElementById('patientDoctorSelect')?.value;
+  const selectedControlDoctor=selectedPatientControlDoctorId();
   notifications.filter(n=>!n.read_at&&[
     'NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'
   ].includes(n.type)).forEach(n=>markNotificationRead(n.id));
@@ -2563,6 +2959,11 @@ function markVisibleMedicalNotifications(){
     notifications.filter(n=>!n.read_at&&[
       'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'
     ].includes(n.type)&&n.related_user_id===selectedDoctor).forEach(n=>markNotificationRead(n.id));
+  }
+  if(selectedControlDoctor){
+    notifications.filter(n=>!n.read_at&&[
+      'NEW_CONTROL','CONTROL_CANCELLED'
+    ].includes(n.type)&&n.related_user_id===selectedControlDoctor).forEach(n=>markNotificationRead(n.id));
   }
 }
 
@@ -2670,7 +3071,7 @@ async function syncPatientPrescriptions(){
 }
 
 async function syncPatientMedicalData(){
-  await Promise.allSettled([syncPatientMessages(),syncPatientPrescriptions()]);
+  await Promise.allSettled([syncPatientMessages(),syncPatientPrescriptions(),syncPatientControls()]);
 }
 
 async function syncPatientConversation(){return syncPatientMessages()}
@@ -2747,7 +3148,7 @@ async function syncDoctorPrescriptions(patientId){
 }
 
 async function syncDoctorMedicalData(patientId){
-  await Promise.allSettled([syncDoctorMessages(patientId),syncDoctorPrescriptions(patientId)]);
+  await Promise.allSettled([syncDoctorMessages(patientId),syncDoctorPrescriptions(patientId),syncDoctorControls(patientId)]);
 }
 
 async function syncDoctorConversation(patientId){return syncDoctorMessages(patientId)}
@@ -2942,8 +3343,14 @@ async function openDoctorPatient(patientId){
       p_doctor_user_id:currentUser.id,
       p_patient_user_id:patientId
     })||[]).filter(m=>!m.deleted_at);
-    doctorPatientDetail={profile:p,records:recs,prescriptions,messages};
-    const matching=notifications.filter(n=>!n.read_at&&n.type==='NEW_MESSAGE'&&n.related_user_id===patientId);
+    const controls=(await dbRpc('bodycare_get_controls',{
+      p_doctor_user_id:currentUser.id,
+      p_patient_user_id:patientId
+    })||[]);
+    doctorPatientDetail={profile:p,records:recs,prescriptions,messages,controls};
+    const matching=notifications.filter(n=>!n.read_at&&[
+      'NEW_MESSAGE','NEW_CONTROL','CONTROL_CANCELLED'
+    ].includes(n.type)&&n.related_user_id===patientId);
     for(const n of matching)markNotificationRead(n.id);
     doctorPatientDetailView();
   }catch(err){alert(err.message)}
@@ -3014,6 +3421,32 @@ function doctorPatientDetailView(){
     </section>
     <section class="card"><h2 class="section-title">Evolución de peso</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'weight_kg',p.target_weight_kg?Number(p.target_weight_kg):null,'Peso (kg)','kg')}</div></section>
     <section class="card"><h2 class="section-title">Circunferencia abdominal</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'abdominal_circumference_cm',null,'Circunferencia (cm)','cm')}</div></section>
+    <section class="card" id="doctorControlsSection">
+      <div class="card-head">
+        <div>
+          <h2 class="section-title">Controles</h2>
+          <div class="muted">Registra un nuevo control. El paciente lo verá de inmediato y recibirá una notificación.</div>
+        </div>
+      </div>
+      <form id="doctorControlForm" class="control-form">
+        <div class="grid control-grid">
+          <div>
+            <label for="doctorControlDate">Fecha</label>
+            <input id="doctorControlDate" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(today())}" required>
+          </div>
+          <div>
+            <label for="doctorControlTime">Hora</label>
+            <input id="doctorControlTime" type="time" required>
+          </div>
+        </div>
+        <label for="doctorControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>
+        <textarea id="doctorControlNotes" rows="2" maxlength="1000" placeholder="Ej: control de evolución"></textarea>
+        <div class="form-actions"><button class="primary" type="submit">Registrar control</button></div>
+      </form>
+      <div id="doctorControlSyncStatus" class="control-sync-status syncing"><span class="control-sync-dot"></span><span>Actualizando controles…</span></div>
+      <div id="doctorControlList">${controlListMarkup(d.controls||[],'doctor')}</div>
+    </section>
+
     <section class="card">
       <div class="card-head"><div><h2 class="section-title">Indicación farmacológica</h2><div class="muted">Crea una nueva indicación o selecciona una existente para editarla.</div></div></div>
       <div class="integration-note">La receta electrónica, firma y SNRE quedan pendientes. Esta versión permite crear, modificar, retirar y compartir la indicación dentro de BodyCare.</div>
@@ -3034,6 +3467,10 @@ function doctorPatientDetailView(){
   bindCommonHeader();
   renderDoctorMessageThread();
   renderDoctorPrescriptionList();
+  renderDoctorControls();
+  document.getElementById('doctorControlForm')?.addEventListener('submit',createDoctorControl);
+  document.getElementById('doctorControlSyncStatus')?.addEventListener('click',()=>syncDoctorControls(p.user_id));
+  bindDateCLInputs();
   document.getElementById('backPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetail=null;doctorView()});
   bindDoctorPrescriptionForm();
   document.getElementById('doctorPrescriptionSyncStatus')?.addEventListener('click',()=>syncDoctorPrescriptions(p.user_id));
@@ -3483,7 +3920,7 @@ async function logout(){
   stopRealtime();
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];doctorProfile=null;doctorPatients=[];doctorPatientDetail=null;editingPrescriptionId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPatientDetail=null;editingPrescriptionId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){
