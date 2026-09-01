@@ -1277,3 +1277,190 @@ input[data-date-cl].date-invalid{
     width:100% !important;
   }
 }
+
+/* BodyCare V16.3 — selector de fecha robusto, sin input date oculto */
+.date-native-picker,
+.date-native-picker-unused{
+  display:none !important;
+  pointer-events:none !important;
+}
+
+.date-cl-control{
+  position:relative;
+  width:100%;
+  min-width:0;
+}
+
+.date-cl-control input[data-date-cl]{
+  position:relative;
+  z-index:1;
+  width:100%;
+  min-width:0;
+  padding-right:48px !important;
+  color:#182230 !important;
+  opacity:1 !important;
+  -webkit-text-fill-color:#182230 !important;
+}
+
+.control-frame.date-cl-control input[data-date-cl]{
+  flex:1 1 0%;
+  width:1px !important;
+  padding-right:48px !important;
+}
+
+.date-cl-button{
+  position:absolute;
+  z-index:4;
+  right:6px;
+  top:50%;
+  transform:translateY(-50%);
+  width:36px;
+  height:36px;
+  display:grid;
+  place-items:center;
+  padding:0;
+  margin:0;
+  border:0;
+  border-radius:9px;
+  background:transparent;
+  color:#175cd3;
+  cursor:pointer;
+  pointer-events:auto;
+  touch-action:manipulation;
+}
+.date-cl-button:hover,
+.date-cl-button:focus-visible{
+  background:#eff8ff;
+  outline:none;
+}
+.date-cl-button svg{
+  width:21px;
+  height:21px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
+.bodycare-calendar-overlay{
+  position:fixed;
+  inset:0;
+  z-index:20000;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:18px;
+  background:rgba(16,24,40,.48);
+}
+.bodycare-calendar-overlay.open{
+  display:flex !important;
+}
+
+.bodycare-calendar-dialog{
+  width:min(370px,calc(100vw - 32px));
+  max-height:calc(100vh - 32px);
+  overflow:auto;
+  padding:16px;
+  border-radius:18px;
+  background:#fff;
+  box-shadow:0 24px 80px rgba(16,24,40,.30);
+}
+
+.bodycare-calendar-header{
+  display:grid;
+  grid-template-columns:42px minmax(0,1fr) 42px;
+  align-items:center;
+  gap:8px;
+  margin-bottom:10px;
+}
+.bodycare-calendar-title{
+  text-align:center;
+  font-weight:800;
+  color:#101828;
+}
+.bodycare-calendar-nav{
+  width:40px;
+  height:40px;
+  padding:0;
+  border:1px solid #e4e7ec;
+  border-radius:10px;
+  background:#fff;
+  color:#344054;
+  font-size:26px;
+  line-height:1;
+  cursor:pointer;
+}
+
+.bodycare-calendar-weekdays,
+.bodycare-calendar-grid{
+  display:grid;
+  grid-template-columns:repeat(7,minmax(0,1fr));
+  gap:4px;
+}
+.bodycare-calendar-weekdays{
+  margin-bottom:5px;
+  color:#667085;
+  font-size:.72rem;
+  font-weight:750;
+  text-align:center;
+}
+.bodycare-calendar-weekdays span{
+  padding:5px 0;
+}
+
+.bodycare-calendar-day,
+.bodycare-calendar-empty{
+  aspect-ratio:1/1;
+  min-width:0;
+}
+.bodycare-calendar-day{
+  border:0;
+  border-radius:10px;
+  background:transparent;
+  color:#344054;
+  font:inherit;
+  font-weight:650;
+  cursor:pointer;
+  touch-action:manipulation;
+}
+.bodycare-calendar-day:hover{
+  background:#eff8ff;
+  color:#175cd3;
+}
+.bodycare-calendar-day.today{
+  box-shadow:inset 0 0 0 1px #84adff;
+  color:#175cd3;
+}
+.bodycare-calendar-day.selected{
+  background:#175cd3;
+  color:#fff;
+  box-shadow:none;
+}
+
+.bodycare-calendar-footer{
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+  margin-top:14px;
+  padding-top:12px;
+  border-top:1px solid #eaecf0;
+}
+
+@media(max-width:600px){
+  .bodycare-calendar-overlay{
+    align-items:flex-end;
+    padding:0;
+  }
+  .bodycare-calendar-dialog{
+    width:100%;
+    max-width:none;
+    max-height:80vh;
+    border-radius:20px 20px 0 0;
+    padding:18px 18px calc(18px + env(safe-area-inset-bottom));
+  }
+  .bodycare-calendar-day{
+    min-height:44px;
+    font-size:1rem;
+  }
+}

@@ -381,3 +381,16 @@ https://lsueyras.github.io/pesocare/
 - Fecha y Hora se alinean desde arriba en escritorio.
 - Información del tamaño de bloque sale de la columna Hora y pasa a una línea independiente.
 - Fecha y Hora quedan con altura y ancho equivalentes.
+
+
+## BodyCare V16.3 — Selector de fecha robusto
+- Elimina completamente el `input type=date` transparente de V16.2.
+- El campo visible vuelve a mostrar y permitir escritura en DD/MM/AAAA.
+- El botón calendario es un botón real de BodyCare.
+- Calendario modal propio, montado directamente en `body`, evitando clipping de formularios.
+- Seleccionar un día escribe inmediatamente DD/MM/AAAA y mantiene ISO interno.
+- Funciona igual para:
+  - registro de peso;
+  - controles médico/paciente;
+  - fecha de inicio de prescripción;
+  - configuración inicial del seguimiento.

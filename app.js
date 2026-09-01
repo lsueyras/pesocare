@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='16.2';
+const APP_VERSION='16.3';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -121,9 +121,10 @@ function requireDateCL(id,label,allowEmpty=false){
 }
 
 
-let datePickerTarget=null;
-let datePickerTargetId=null;
-let datePickerMonth=null;
+
+let bodycareCalendarTargetId=null;
+let bodycareCalendarYear=null;
+let bodycareCalendarMonth=null;
 
 function calendarButtonSvg(){
   return `<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -131,153 +132,159 @@ function calendarButtonSvg(){
   </svg>`;
 }
 
-function ensureDatePicker(){
-  let overlay=document.getElementById('bodycareDatePicker');
+function currentCalendarTarget(){
+  return bodycareCalendarTargetId?document.getElementById(bodycareCalendarTargetId):null;
+}
+
+function ensureBodyCareCalendar(){
+  let overlay=document.getElementById('bodycareCalendarOverlay');
   if(overlay)return overlay;
 
   overlay=document.createElement('div');
-  overlay.id='bodycareDatePicker';
-  overlay.className='date-picker-overlay';
+  overlay.id='bodycareCalendarOverlay';
+  overlay.className='bodycare-calendar-overlay';
   overlay.setAttribute('aria-hidden','true');
   overlay.innerHTML=`
-    <div class="date-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="datePickerTitle">
-      <div class="date-picker-head">
-        <button type="button" class="date-picker-nav" id="datePickerPrev" aria-label="Mes anterior">‹</button>
-        <div class="date-picker-title" id="datePickerTitle"></div>
-        <button type="button" class="date-picker-nav" id="datePickerNext" aria-label="Mes siguiente">›</button>
+    <div class="bodycare-calendar-dialog" role="dialog" aria-modal="true" aria-labelledby="bodycareCalendarTitle">
+      <div class="bodycare-calendar-header">
+        <button type="button" class="bodycare-calendar-nav" data-calendar-action="prev" aria-label="Mes anterior">‹</button>
+        <div id="bodycareCalendarTitle" class="bodycare-calendar-title"></div>
+        <button type="button" class="bodycare-calendar-nav" data-calendar-action="next" aria-label="Mes siguiente">›</button>
       </div>
-      <div class="date-picker-weekdays">
+      <div class="bodycare-calendar-weekdays">
         <span>Lu</span><span>Ma</span><span>Mi</span><span>Ju</span><span>Vi</span><span>Sá</span><span>Do</span>
       </div>
-      <div class="date-picker-grid" id="datePickerGrid"></div>
-      <div class="date-picker-actions">
-        <button type="button" class="secondary small-btn" id="datePickerToday">Hoy</button>
-        <button type="button" class="secondary small-btn" id="datePickerClose">Cerrar</button>
+      <div id="bodycareCalendarGrid" class="bodycare-calendar-grid"></div>
+      <div class="bodycare-calendar-footer">
+        <button type="button" class="secondary small-btn" data-calendar-action="today">Hoy</button>
+        <button type="button" class="secondary small-btn" data-calendar-action="close">Cerrar</button>
       </div>
     </div>`;
 
   document.body.appendChild(overlay);
 
   overlay.addEventListener('click',e=>{
-    if(e.target===overlay)closeDatePicker();
+    const action=e.target.closest('[data-calendar-action]')?.dataset.calendarAction;
+    const dayButton=e.target.closest('[data-calendar-date]');
+
+    if(e.target===overlay){
+      closeBodyCareCalendar();
+      return;
+    }
+
+    if(dayButton){
+      applyBodyCareCalendarDate(dayButton.dataset.calendarDate);
+      return;
+    }
+
+    if(action==='prev'){
+      bodycareCalendarMonth-=1;
+      if(bodycareCalendarMonth<0){
+        bodycareCalendarMonth=11;
+        bodycareCalendarYear-=1;
+      }
+      renderBodyCareCalendar();
+    }else if(action==='next'){
+      bodycareCalendarMonth+=1;
+      if(bodycareCalendarMonth>11){
+        bodycareCalendarMonth=0;
+        bodycareCalendarYear+=1;
+      }
+      renderBodyCareCalendar();
+    }else if(action==='today'){
+      applyBodyCareCalendarDate(today());
+    }else if(action==='close'){
+      closeBodyCareCalendar();
+    }
   });
-  document.getElementById('datePickerPrev').addEventListener('click',()=>{
-    datePickerMonth=new Date(Date.UTC(datePickerMonth.getUTCFullYear(),datePickerMonth.getUTCMonth()-1,1));
-    renderDatePicker();
-  });
-  document.getElementById('datePickerNext').addEventListener('click',()=>{
-    datePickerMonth=new Date(Date.UTC(datePickerMonth.getUTCFullYear(),datePickerMonth.getUTCMonth()+1,1));
-    renderDatePicker();
-  });
-  document.getElementById('datePickerToday').addEventListener('click',e=>{
-    e.preventDefault();
-    const iso=today();
-    if(applyDatePickerSelection(iso))closeDatePicker();
-  });
-  document.getElementById('datePickerClose').addEventListener('click',closeDatePicker);
 
   document.addEventListener('keydown',e=>{
-    if(e.key==='Escape'&&overlay.classList.contains('open'))closeDatePicker();
+    if(e.key==='Escape'&&overlay.classList.contains('open'))closeBodyCareCalendar();
   });
 
   return overlay;
 }
 
-function currentDatePickerTarget(){
-  if(datePickerTargetId){
-    const live=document.getElementById(datePickerTargetId);
-    if(live)return live;
-  }
-  return datePickerTarget&&datePickerTarget.isConnected?datePickerTarget:null;
-}
+function openBodyCareCalendar(input){
+  if(!input?.id)return;
 
-function applyDatePickerSelection(iso){
-  const target=currentDatePickerTarget();
-  if(!target||!/^\d{4}-\d{2}-\d{2}$/.test(String(iso||'')))return false;
+  bodycareCalendarTargetId=input.id;
+  const selected=parseDateCL(input.value)||input.dataset.isoDate||today();
+  const m=String(selected).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m)return;
 
-  target.dataset.isoDate=iso;
-  target.value=formatDateCL(iso);
-  target.classList.remove('date-invalid');
+  bodycareCalendarYear=Number(m[1]);
+  bodycareCalendarMonth=Number(m[2])-1;
 
-  // Fire both events because control availability listens to change,
-  // while other views can listen to input.
-  target.dispatchEvent(new Event('input',{bubbles:true}));
-  // input handler removes isoDate while typing, restore it after the event.
-  target.dataset.isoDate=iso;
-  target.value=formatDateCL(iso);
-  target.dispatchEvent(new Event('change',{bubbles:true}));
-  target.dataset.isoDate=iso;
-  target.value=formatDateCL(iso);
-  return true;
-}
-
-function openDatePicker(input){
-  if(!input)return;
-  datePickerTarget=input;
-  datePickerTargetId=input.id||null;
-
-  const current=parseDateCL(input.value)||input.dataset.isoDate||null;
-  if(current)input.dataset.isoDate=current;
-  const base=current?parseDate(current):new Date();
-  datePickerMonth=new Date(Date.UTC(base.getUTCFullYear?base.getUTCFullYear():base.getFullYear(), base.getUTCMonth?base.getUTCMonth():base.getMonth(), 1));
-
-  const overlay=ensureDatePicker();
+  const overlay=ensureBodyCareCalendar();
   overlay.classList.add('open');
   overlay.setAttribute('aria-hidden','false');
-  renderDatePicker();
+  renderBodyCareCalendar();
 }
 
-function closeDatePicker(){
-  const overlay=document.getElementById('bodycareDatePicker');
+function closeBodyCareCalendar(){
+  const overlay=document.getElementById('bodycareCalendarOverlay');
   if(overlay){
     overlay.classList.remove('open');
     overlay.setAttribute('aria-hidden','true');
   }
-  datePickerTarget=null;
-  datePickerTargetId=null;
+  bodycareCalendarTargetId=null;
 }
 
-function renderDatePicker(){
-  if(!datePickerMonth)return;
+function applyBodyCareCalendarDate(iso){
+  const target=currentCalendarTarget();
+  if(!target||!/^\d{4}-\d{2}-\d{2}$/.test(String(iso||'')))return;
 
-  const year=datePickerMonth.getUTCFullYear();
-  const month=datePickerMonth.getUTCMonth();
-  const title=document.getElementById('datePickerTitle');
-  const grid=document.getElementById('datePickerGrid');
-  if(!title||!grid)return;
+  target.value=formatDateCL(iso);
+  target.dataset.isoDate=iso;
+  target.classList.remove('date-invalid');
 
-  title.textContent=new Intl.DateTimeFormat('es-CL',{month:'long',year:'numeric',timeZone:'UTC'})
-    .format(new Date(Date.UTC(year,month,1)))
-    .replace(/^./,c=>c.toUpperCase());
+  // Availability and other dependent modules listen to change.
+  target.dispatchEvent(new Event('change',{bubbles:true}));
+
+  // Re-assert after listeners in case another handler touched the value.
+  target.value=formatDateCL(iso);
+  target.dataset.isoDate=iso;
+
+  closeBodyCareCalendar();
+}
+
+function renderBodyCareCalendar(){
+  const title=document.getElementById('bodycareCalendarTitle');
+  const grid=document.getElementById('bodycareCalendarGrid');
+  const target=currentCalendarTarget();
+  if(!title||!grid||bodycareCalendarYear===null||bodycareCalendarMonth===null)return;
+
+  const year=bodycareCalendarYear;
+  const month=bodycareCalendarMonth;
+
+  title.textContent=new Intl.DateTimeFormat('es-CL',{
+    month:'long',
+    year:'numeric',
+    timeZone:'UTC'
+  }).format(new Date(Date.UTC(year,month,1))).replace(/^./,c=>c.toUpperCase());
 
   const first=new Date(Date.UTC(year,month,1));
   const lastDay=new Date(Date.UTC(year,month+1,0)).getUTCDate();
-  const mondayIndex=(first.getUTCDay()+6)%7; // Monday = 0
-  const target=currentDatePickerTarget();
-  const selectedIso=target?(parseDateCL(target.value)||target.dataset.isoDate||null):null;
+  const leading=(first.getUTCDay()+6)%7;
+  const selected=target?(parseDateCL(target.value)||target.dataset.isoDate||null):null;
   const todayIso=today();
 
   let html='';
-  for(let i=0;i<mondayIndex;i++)html+='<span class="date-picker-empty"></span>';
+  for(let i=0;i<leading;i++)html+='<span class="bodycare-calendar-empty"></span>';
 
   for(let day=1;day<=lastDay;day++){
     const iso=`${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-    const classes=[
-      'date-picker-day',
-      iso===selectedIso?'selected':'',
+    const cls=[
+      'bodycare-calendar-day',
+      iso===selected?'selected':'',
       iso===todayIso?'today':''
     ].filter(Boolean).join(' ');
-    html+=`<button type="button" class="${classes}" data-date-iso="${iso}" aria-label="${formatDateCL(iso)}">${day}</button>`;
+
+    html+=`<button type="button" class="${cls}" data-calendar-date="${iso}" aria-label="${formatDateCL(iso)}">${day}</button>`;
   }
 
   grid.innerHTML=html;
-  grid.querySelectorAll('[data-date-iso]').forEach(btn=>{
-    btn.addEventListener('click',e=>{
-      e.preventDefault();
-      e.stopPropagation();
-      if(applyDatePickerSelection(btn.dataset.dateIso))closeDatePicker();
-    });
-  });
 }
 
 function enhanceDateCLControl(input){
@@ -285,57 +292,37 @@ function enhanceDateCLControl(input){
   input.dataset.calendarEnhanced='1';
 
   const initialIso=parseDateCL(input.value);
-  if(initialIso)input.dataset.isoDate=initialIso;
-
-  const parent=input.parentElement;
-  let wrap;
-
-  if(parent?.classList.contains('date-cl-control')){
-    wrap=parent;
-  }else{
-    wrap=document.createElement('div');
-    wrap.className='date-cl-control';
-    input.parentNode.insertBefore(wrap,input);
-    wrap.appendChild(input);
+  if(initialIso){
+    input.dataset.isoDate=initialIso;
+    input.value=formatDateCL(initialIso);
   }
 
-  // Decorative calendar button. The transparent native date input above it
-  // receives the click, so desktop and iOS use their own reliable picker.
-  const button=document.createElement('span');
+  let wrap=input.parentElement;
+
+  // Reuse BodyCare's visible field frame when one already exists.
+  if(wrap?.classList.contains('control-frame')){
+    wrap.classList.add('date-cl-control');
+  }else if(!wrap?.classList.contains('date-cl-control')){
+    const newWrap=document.createElement('div');
+    newWrap.className='date-cl-control';
+    input.parentNode.insertBefore(newWrap,input);
+    newWrap.appendChild(input);
+    wrap=newWrap;
+  }
+
+  const button=document.createElement('button');
+  button.type='button';
   button.className='date-cl-button';
-  button.setAttribute('aria-hidden','true');
+  button.setAttribute('aria-label','Abrir calendario');
   button.innerHTML=calendarButtonSvg();
-  wrap.appendChild(button);
 
-  const native=document.createElement('input');
-  native.type='date';
-  native.className='date-native-picker';
-  native.tabIndex=-1;
-  native.setAttribute('aria-label','Seleccionar fecha');
-
-  const syncNativeFromVisible=()=>{
-    const iso=parseDateCL(input.value)||input.dataset.isoDate||today();
-    if(/^\d{4}-\d{2}-\d{2}$/.test(iso))native.value=iso;
-  };
-
-  native.addEventListener('pointerdown',syncNativeFromVisible);
-  native.addEventListener('mousedown',syncNativeFromVisible);
-  native.addEventListener('touchstart',syncNativeFromVisible,{passive:true});
-  native.addEventListener('change',()=>{
-    const iso=native.value;
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(iso))return;
-
-    input.dataset.isoDate=iso;
-    input.value=formatDateCL(iso);
-    input.classList.remove('date-invalid');
-
-    // Change is enough for agenda availability; input keeps other views in sync.
-    input.dispatchEvent(new Event('change',{bubbles:true}));
-    input.dataset.isoDate=iso;
-    input.value=formatDateCL(iso);
+  button.addEventListener('click',e=>{
+    e.preventDefault();
+    e.stopPropagation();
+    openBodyCareCalendar(input);
   });
 
-  wrap.appendChild(native);
+  wrap.appendChild(button);
 }
 
 const parseDecimal=value=>{
@@ -3286,7 +3273,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.2'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.3'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
