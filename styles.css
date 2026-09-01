@@ -874,3 +874,25 @@ input[data-date-cl].date-invalid{
     width:100%;
   }
 }
+
+/* BodyCare V15.3 — formulario de controles */
+.control-grid > div{
+  min-width:0;
+  width:100%;
+}
+.control-form .control-grid input,
+.control-form .control-grid select{
+  display:block;
+  width:100% !important;
+  max-width:100% !important;
+  min-width:0 !important;
+  box-sizing:border-box !important;
+  inline-size:100% !important;
+}
+.control-form input[type="time"]{
+  width:100% !important;
+  max-width:100% !important;
+  min-width:0 !important;
+  box-sizing:border-box !important;
+  inline-size:100% !important;
+}

@@ -308,3 +308,16 @@ https://lsueyras.github.io/pesocare/
 - Al volver a la pestaña/aplicación, BodyCare valida el token antes de sincronizar.
 - Evita que una renovación concurrente borre una sesión ya actualizada.
 - Protege mensajes, prescripciones, controles, notificaciones, soporte y futuras APIs.
+
+
+## BodyCare V15.3 — Ajustes de controles
+- Impide duplicar un control activo para el mismo médico, paciente, fecha y hora.
+- La base incorpora índice único parcial para evitar duplicados incluso con envíos simultáneos.
+- Duplicados activos previos se conservan para auditoría y los adicionales quedan CANCELLED.
+- Tras registrar un control:
+  - fecha vuelve a hoy;
+  - hora queda vacía;
+  - observación queda vacía;
+  - médico seleccionado se conserva.
+- El campo Hora adopta exactamente el ancho del resto de los campos en iPhone y escritorio.
+- Fechas del listado se muestran en DD/MM/AAAA.

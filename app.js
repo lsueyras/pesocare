@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='15.2';
+const APP_VERSION='15.3';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -876,6 +876,7 @@ async function dbRpc(name,params={}){
       /prescription not found/i.test(raw)?'No se encontró la indicación. Actualiza la pantalla e inténtalo nuevamente.':
       /message not found/i.test(raw)?'No se encontró el mensaje. Es posible que ya haya sido eliminado.':
       /control not found/i.test(raw)?'No se encontró el control. Es posible que ya haya sido modificado.':
+      /Control already scheduled for this date and time/i.test(raw)?'Ya existe un control agendado con este médico para esa fecha y hora.':
       /not authorized/i.test(raw)?'Tu sesión no tiene autorización para realizar esta acción.':
       Number(err?.status)===401?'Tu sesión venció y no pudo renovarse automáticamente. Vuelve a iniciar sesión.':
       raw;
@@ -2606,15 +2607,18 @@ function formatControlDateTime(value){
   if(!value)return '—';
   const d=new Date(value);
   if(Number.isNaN(d.getTime()))return '—';
-  const date=new Intl.DateTimeFormat('es-CL',{
+
+  const dateParts=new Intl.DateTimeFormat('es-CL',{
     timeZone:'America/Santiago',
     day:'2-digit',month:'2-digit',year:'numeric'
-  }).format(d);
-  const time=new Intl.DateTimeFormat('es-CL',{
+  }).formatToParts(d).reduce((acc,p)=>{acc[p.type]=p.value;return acc},{});
+
+  const timeParts=new Intl.DateTimeFormat('es-CL',{
     timeZone:'America/Santiago',
     hour:'2-digit',minute:'2-digit',hour12:false
-  }).format(d);
-  return `${date} · ${time}`;
+  }).formatToParts(d).reduce((acc,p)=>{acc[p.type]=p.value;return acc},{});
+
+  return `${dateParts.day}/${dateParts.month}/${dateParts.year} · ${timeParts.hour}:${timeParts.minute}`;
 }
 
 function controlCreatorLabel(c,context){
@@ -2789,7 +2793,14 @@ async function createPatientControl(e){
     ].sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
 
     renderPatientControls();
-    document.getElementById('patientControlNotes').value='';
+
+    const patientDate=document.getElementById('patientControlDate');
+    const patientTime=document.getElementById('patientControlTime');
+    const patientNotes=document.getElementById('patientControlNotes');
+    if(patientDate)patientDate.value=formatDateCL(today());
+    if(patientTime)patientTime.value='';
+    if(patientNotes)patientNotes.value='';
+
     setControlSyncStatus('patient','ok','Control registrado y compartido');
     showToast('Control registrado','Tu médico recibirá la actualización automáticamente.','NEW_CONTROL');
     syncPatientControls().catch(()=>{});
@@ -2842,7 +2853,14 @@ async function createDoctorControl(e){
     ].sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
 
     renderDoctorControls();
-    document.getElementById('doctorControlNotes').value='';
+
+    const doctorDate=document.getElementById('doctorControlDate');
+    const doctorTime=document.getElementById('doctorControlTime');
+    const doctorNotes=document.getElementById('doctorControlNotes');
+    if(doctorDate)doctorDate.value=formatDateCL(today());
+    if(doctorTime)doctorTime.value='';
+    if(doctorNotes)doctorNotes.value='';
+
     setControlSyncStatus('doctor','ok','Control registrado y compartido');
     showToast('Control registrado','El paciente recibirá la actualización automáticamente.','NEW_CONTROL');
     syncDoctorControls(patientId).catch(()=>{});
@@ -2956,7 +2974,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.2'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.3'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
