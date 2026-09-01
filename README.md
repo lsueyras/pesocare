@@ -321,3 +321,11 @@ https://lsueyras.github.io/pesocare/
   - médico seleccionado se conserva.
 - El campo Hora adopta exactamente el ancho del resto de los campos en iPhone y escritorio.
 - Fechas del listado se muestran en DD/MM/AAAA.
+
+
+## BodyCare V15.4 — Ancho del selector de Hora en iPhone
+- El campo Hora usa un contenedor visual propio de BodyCare.
+- Safari mantiene su selector nativo de hora.
+- El borde visible pertenece al contenedor y no al input nativo.
+- Se impide que WebKit expanda el control más allá de la columna.
+- Hora queda con el mismo ancho visual que Fecha, Médico y los demás campos.

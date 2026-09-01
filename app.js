@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='15.3';
+const APP_VERSION='15.4';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -2263,7 +2263,9 @@ function patientDoctorView(){
             </div>
             <div>
               <label for="patientControlTime">Hora</label>
-              <input id="patientControlTime" type="time" required>
+              <div class="time-control-frame">
+                <input id="patientControlTime" type="time" required>
+              </div>
             </div>
           </div>
           <label for="patientControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>
@@ -2974,7 +2976,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.3'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.4'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -3530,7 +3532,9 @@ function doctorPatientDetailView(){
           </div>
           <div>
             <label for="doctorControlTime">Hora</label>
-            <input id="doctorControlTime" type="time" required>
+            <div class="time-control-frame">
+              <input id="doctorControlTime" type="time" required>
+            </div>
           </div>
         </div>
         <label for="doctorControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>

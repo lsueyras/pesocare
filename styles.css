@@ -896,3 +896,79 @@ input[data-date-cl].date-invalid{
   box-sizing:border-box !important;
   inline-size:100% !important;
 }
+
+/* BodyCare V15.4 — corrección estructural ancho Hora en Safari/iPhone */
+.time-control-frame{
+  display:flex;
+  align-items:center;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  height:50px;
+  overflow:hidden;
+  border:1px solid #d0d5dd;
+  border-radius:12px;
+  background:#fff;
+  box-sizing:border-box;
+}
+
+.time-control-frame:focus-within{
+  border-color:#175cd3;
+  box-shadow:0 0 0 3px rgba(23,92,211,.15);
+}
+
+.time-control-frame input[type="time"]{
+  display:block !important;
+  flex:1 1 0 !important;
+  width:100% !important;
+  inline-size:100% !important;
+  max-width:100% !important;
+  max-inline-size:100% !important;
+  min-width:0 !important;
+  min-inline-size:0 !important;
+  height:100% !important;
+  min-height:0 !important;
+  margin:0 !important;
+  padding:0 12px !important;
+  border:0 !important;
+  border-radius:0 !important;
+  outline:0 !important;
+  box-shadow:none !important;
+  background:transparent !important;
+  box-sizing:border-box !important;
+  overflow:hidden !important;
+}
+
+.time-control-frame input[type="time"]:focus{
+  outline:0 !important;
+  box-shadow:none !important;
+  border:0 !important;
+}
+
+/* Safari / WebKit internal time representation */
+.time-control-frame input[type="time"]::-webkit-date-and-time-value{
+  display:block;
+  width:100%;
+  min-width:0;
+  margin:0;
+  text-align:center;
+}
+
+.time-control-frame input[type="time"]::-webkit-datetime-edit{
+  width:100%;
+  min-width:0;
+}
+
+.time-control-frame input[type="time"]::-webkit-calendar-picker-indicator{
+  margin:0;
+  flex:0 0 auto;
+}
+
+@media(max-width:600px){
+  .time-control-frame{
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0 !important;
+    overflow:hidden !important;
+  }
+}
