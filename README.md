@@ -232,3 +232,12 @@ https://lsueyras.github.io/pesocare/
 - Se agrega vía de administración a `route_text` existente, sin cambio de esquema de BD.
 - Se muestra advertencia regulatoria por medicamento.
 - No se agregan automáticamente medicamentos usados solo off-label para pérdida de peso.
+
+## BodyCare V14.8 — Prescripciones transaccionales e independientes
+- Guardar/editar indicaciones usa `bodycare_save_prescription`.
+- Leer indicaciones usa `bodycare_get_prescriptions`.
+- El módulo de prescripciones ya no reconstruye la ficha ni toca mensajería.
+- La indicación aparece inmediatamente en el médico al guardar.
+- El paciente se actualiza por Realtime y por sincronización de respaldo.
+- Editar/cancelar refresca solo el formulario de prescripción.
+- Eliminar refresca solo la lista de prescripciones.

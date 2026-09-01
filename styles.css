@@ -520,3 +520,11 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
   color:#475467;
   font-size:.72rem;
 }
+
+/* BodyCare V14.8 — prescripciones transaccionales independientes */
+.rx-sync-status{display:flex;align-items:center;gap:7px;min-height:30px;margin:7px 0 8px;color:#667085;font-size:.74rem;cursor:pointer}
+.rx-sync-dot{width:8px;height:8px;border-radius:50%;background:#f79009;flex:0 0 auto}
+.rx-sync-status.syncing .rx-sync-dot{background:#f79009;animation:pulse-live 1.2s infinite}
+.rx-sync-status.ok .rx-sync-dot{background:#12b76a}
+.rx-sync-status.error{color:#b42318;font-weight:650}
+.rx-sync-status.error .rx-sync-dot{background:#d92d20}

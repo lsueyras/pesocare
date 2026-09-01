@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='14.7';
+const APP_VERSION='14.8';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
@@ -1607,6 +1607,7 @@ function patientDoctorView(){
     <section class="card">
       <h2 class="section-title">Indicaciones compartidas</h2>
       <div class="integration-note">La receta electrónica, firma y conexión SNRE quedan pendientes. Estas indicaciones funcionan dentro de BodyCare y no sustituyen todavía una receta oficial.</div>
+      <div id="patientPrescriptionSyncStatus" class="rx-sync-status syncing"><span class="rx-sync-dot"></span><span>Actualizando indicaciones…</span></div>
       <div id="patientPrescriptionList">${patientPrescriptionListMarkup()}</div>
     </section>
 
@@ -1952,6 +1953,7 @@ function bindPatientCare(){
     if(doctorId)clearConversation(doctorId,currentUser.id,'patient');
   });
   document.getElementById('patientChatSyncStatus')?.addEventListener('click',()=>syncPatientMessages());
+  document.getElementById('patientPrescriptionSyncStatus')?.addEventListener('click',()=>syncPatientPrescriptions());
 
   document.getElementById('supportForm')?.addEventListener('submit',async e=>{
     e.preventDefault();
@@ -1961,7 +1963,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.7'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.8'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -1998,6 +2000,14 @@ async function syncSupportTickets(){
     supportTickets=rows;
     renderSupportTickets();
   }catch(err){console.warn('Support sync',err)}
+}
+
+function setPrescriptionSyncStatus(context,state,text){
+  const el=document.getElementById(context==='patient'?'patientPrescriptionSyncStatus':'doctorPrescriptionSyncStatus');
+  if(!el)return;
+  el.className=`rx-sync-status ${state||''}`;
+  const label=el.querySelector('span:last-child');
+  if(label)label.textContent=text;
 }
 
 function patientPrescriptionListMarkup(){
@@ -2100,20 +2110,38 @@ async function syncPatientPrescriptions(){
     patientPrescriptionsSyncPending=true;
     return;
   }
-
   patientPrescriptionsSyncing=true;
+  setPrescriptionSyncStatus('patient','syncing','Actualizando indicaciones…');
   try{
     do{
       patientPrescriptionsSyncPending=false;
-      const rows=await dbGet(
-        `prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}`+
-        `&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`
+      const doctorIds=linkedDoctorProfiles.map(d=>d.user_id);
+      if(!doctorIds.length){
+        patientPrescriptions=[];
+        renderPatientPrescriptionList();
+        setPrescriptionSyncStatus('patient','ok','Sin indicaciones compartidas');
+        break;
+      }
+      const results=await Promise.all(
+        doctorIds.map(doctorId=>dbRpc('bodycare_get_prescriptions',{
+          p_doctor_user_id:doctorId,
+          p_patient_user_id:currentUser.id
+        }).catch(()=>[]))
       );
-      patientPrescriptions=(rows||[]).filter(p=>!p.deleted_at&&p.status==='SHARED');
+      patientPrescriptions=results.flat()
+        .filter(p=>p&&!p.deleted_at&&p.status==='SHARED')
+        .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
       renderPatientPrescriptionList();
+      setPrescriptionSyncStatus(
+        'patient','ok',
+        patientPrescriptions.length
+          ? `Sincronizado · ${patientPrescriptions.length} indicación${patientPrescriptions.length===1?'':'es'}`
+          : 'Sin indicaciones compartidas'
+      );
     }while(patientPrescriptionsSyncPending);
   }catch(err){
     console.warn('Patient prescriptions sync',err);
+    setPrescriptionSyncStatus('patient','error','No fue posible cargar las indicaciones. Toca aquí para reintentar.');
   }finally{
     patientPrescriptionsSyncing=false;
   }
@@ -2166,24 +2194,31 @@ async function syncDoctorPrescriptions(patientId){
     doctorPrescriptionsSyncPending=true;
     return;
   }
-
   doctorPrescriptionsSyncing=true;
+  setPrescriptionSyncStatus('doctor','syncing','Actualizando indicaciones…');
   try{
     do{
       doctorPrescriptionsSyncPending=false;
-      const rows=await dbGet(
-        `prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}`+
-        `&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}`+
-        `&deleted_at=is.null&order=created_at.desc`
-      );
-
+      const rows=await dbRpc('bodycare_get_prescriptions',{
+        p_doctor_user_id:currentUser.id,
+        p_patient_user_id:patientId
+      });
       if(doctorPatientDetail?.profile?.user_id===patientId){
-        doctorPatientDetail.prescriptions=(rows||[]).filter(p=>!p.deleted_at);
+        doctorPatientDetail.prescriptions=(rows||[])
+          .filter(p=>p&&!p.deleted_at)
+          .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
         renderDoctorPrescriptionList();
+        setPrescriptionSyncStatus(
+          'doctor','ok',
+          doctorPatientDetail.prescriptions.length
+            ? `Sincronizado · ${doctorPatientDetail.prescriptions.length} indicación${doctorPatientDetail.prescriptions.length===1?'':'es'}`
+            : 'Sin indicaciones creadas'
+        );
       }
     }while(doctorPrescriptionsSyncPending);
   }catch(err){
     console.warn('Doctor prescriptions sync',err);
+    setPrescriptionSyncStatus('doctor','error','No fue posible cargar las indicaciones. Toca aquí para reintentar.');
   }finally{
     doctorPrescriptionsSyncing=false;
   }
@@ -2377,8 +2412,14 @@ async function openDoctorPatient(patientId){
     const p=(await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(patientId)}&limit=1`))?.[0];
     if(!p)throw new Error('No se encontró la ficha del paciente.');
     const recs=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(patientId)}&order=measured_on.asc,created_at.asc`)||[];
-    const prescriptions=(await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.desc`)||[]).filter(p=>!p.deleted_at);
-    const messages=(await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[]).filter(m=>!m.deleted_at);
+    const prescriptions=(await dbRpc('bodycare_get_prescriptions',{
+      p_doctor_user_id:currentUser.id,
+      p_patient_user_id:patientId
+    })||[]).filter(p=>!p.deleted_at);
+    const messages=(await dbRpc('bodycare_get_conversation',{
+      p_doctor_user_id:currentUser.id,
+      p_patient_user_id:patientId
+    })||[]).filter(m=>!m.deleted_at);
     doctorPatientDetail={profile:p,records:recs,prescriptions,messages};
     const matching=notifications.filter(n=>!n.read_at&&n.type==='NEW_MESSAGE'&&n.related_user_id===patientId);
     for(const n of matching)markNotificationRead(n.id);
@@ -2405,11 +2446,32 @@ function renderDoctorPrescriptionList(){
   el.innerHTML=doctorPrescriptionListMarkup();
   el.querySelectorAll('[data-edit-prescription]').forEach(btn=>btn.addEventListener('click',()=>{
     editingPrescriptionId=btn.dataset.editPrescription;
-    doctorPatientDetailView();
-    document.getElementById('doctorPrescriptionForm')?.scrollIntoView({behavior:'smooth',block:'start'});
+    renderDoctorPrescriptionForm();
+    document.getElementById('doctorPrescriptionFormWrap')?.scrollIntoView({behavior:'smooth',block:'start'});
   }));
-  el.querySelectorAll('[data-delete-prescription]').forEach(btn=>btn.addEventListener('click',()=>deleteDoctorPrescription(btn.dataset.deletePrescription)));
+  el.querySelectorAll('[data-delete-prescription]').forEach(btn=>{
+    btn.addEventListener('click',()=>deleteDoctorPrescription(btn.dataset.deletePrescription));
+  });
 }
+
+function bindDoctorPrescriptionForm(){
+  const editing=doctorPatientDetail?.prescriptions?.find(rx=>rx.id===editingPrescriptionId)||null;
+  document.getElementById('doctorPrescriptionForm')?.addEventListener('submit',saveDoctorPrescription);
+  bindPrescriptionCatalog(editing);
+  document.getElementById('cancelPrescriptionEdit')?.addEventListener('click',()=>{
+    editingPrescriptionId=null;
+    renderDoctorPrescriptionForm();
+  });
+}
+
+function renderDoctorPrescriptionForm(){
+  const wrap=document.getElementById('doctorPrescriptionFormWrap');
+  if(!wrap||!doctorPatientDetail)return;
+  const editing=doctorPatientDetail.prescriptions.find(rx=>rx.id===editingPrescriptionId)||null;
+  wrap.innerHTML=prescriptionFormMarkup(editing);
+  bindDoctorPrescriptionForm();
+}
+
 
 function doctorPatientDetailView(){
   const d=doctorPatientDetail;if(!d)return doctorView();
@@ -2430,9 +2492,10 @@ function doctorPatientDetailView(){
     <section class="card"><h2 class="section-title">Evolución de peso</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'weight_kg',p.target_weight_kg?Number(p.target_weight_kg):null,'Peso (kg)','kg')}</div></section>
     <section class="card"><h2 class="section-title">Circunferencia abdominal</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'abdominal_circumference_cm',null,'Circunferencia (cm)','cm')}</div></section>
     <section class="card">
-      <div class="card-head"><div><h2 class="section-title">Indicación farmacológica</h2><div class="muted">${editing?'Editando indicación existente':'Crear nueva indicación'}</div></div>${editing?'<span class="edit-badge">Modo edición</span>':''}</div>
+      <div class="card-head"><div><h2 class="section-title">Indicación farmacológica</h2><div class="muted">Crea una nueva indicación o selecciona una existente para editarla.</div></div></div>
       <div class="integration-note">La receta electrónica, firma y SNRE quedan pendientes. Esta versión permite crear, modificar, retirar y compartir la indicación dentro de BodyCare.</div>
-${prescriptionFormMarkup(editing)}
+      <div id="doctorPrescriptionFormWrap">${prescriptionFormMarkup(editing)}</div>
+      <div id="doctorPrescriptionSyncStatus" class="rx-sync-status syncing"><span class="rx-sync-dot"></span><span>Actualizando indicaciones…</span></div>
       <div id="doctorPrescriptionList">${doctorPrescriptionListMarkup()}</div>
     </section>
     <section class="card">
@@ -2449,9 +2512,8 @@ ${prescriptionFormMarkup(editing)}
   renderDoctorMessageThread();
   renderDoctorPrescriptionList();
   document.getElementById('backPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetail=null;doctorView()});
-  document.getElementById('doctorPrescriptionForm')?.addEventListener('submit',saveDoctorPrescription);
-  bindPrescriptionCatalog(editing);
-  document.getElementById('cancelPrescriptionEdit')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetailView()});
+  bindDoctorPrescriptionForm();
+  document.getElementById('doctorPrescriptionSyncStatus')?.addEventListener('click',()=>syncDoctorPrescriptions(p.user_id));
   document.getElementById('doctorMessageForm')?.addEventListener('submit',sendDoctorMessage);
   document.getElementById('doctorChatSyncStatus')?.addEventListener('click',()=>syncDoctorMessages(p.user_id));
   document.getElementById('doctorClearConversation')?.addEventListener('click',()=>clearConversation(currentUser.id,p.user_id,'doctor'));
@@ -2460,7 +2522,6 @@ ${prescriptionFormMarkup(editing)}
 async function saveDoctorPrescription(e){
   e.preventDefault();
   const p=doctorPatientDetail.profile;
-
   const medicationSelect=document.getElementById('rxMedicationSelect');
   const selectedEntry=WEIGHT_RX_CATALOG.find(x=>x.id===medicationSelect?.value)||null;
 
@@ -2482,33 +2543,77 @@ async function saveDoctorPrescription(e){
     return;
   }
 
+  const button=e.submitter||e.target.querySelector('button[type="submit"]');
+  if(button)button.disabled=true;
+  setPrescriptionSyncStatus('doctor','syncing',editingPrescriptionId?'Guardando cambios…':'Compartiendo indicación…');
+
   try{
-    if(editingPrescriptionId){
-      await dbUpdate('prescription_drafts',`id=eq.${encodeURIComponent(editingPrescriptionId)}`,payload);
-      editingPrescriptionId=null;
-    }else{
-      await dbInsert('prescription_drafts',{
-        doctor_user_id:currentUser.id,
-        patient_user_id:p.user_id,
-        ...payload,
-        status:'SHARED',
-        legal_status:'PENDING_LEGAL_INTEGRATION'
-      });
-    }
-    await openDoctorPatient(p.user_id);
-  }catch(err){alert(err.message)}
+    const rows=await dbRpc('bodycare_save_prescription',{
+      p_prescription_id:editingPrescriptionId||null,
+      p_doctor_user_id:currentUser.id,
+      p_patient_user_id:p.user_id,
+      p_medication_name:payload.medication_name,
+      p_active_ingredient:payload.active_ingredient,
+      p_dose_text:payload.dose_text,
+      p_frequency_text:payload.frequency_text,
+      p_route_text:payload.route_text,
+      p_start_date:payload.start_date,
+      p_duration_text:payload.duration_text,
+      p_instructions:payload.instructions
+    });
+
+    const saved=Array.isArray(rows)?rows[0]:rows;
+    if(!saved?.id)throw new Error('No se recibió confirmación de la indicación guardada.');
+
+    const existed=(doctorPatientDetail.prescriptions||[]).some(rx=>rx.id===saved.id);
+    doctorPatientDetail.prescriptions=[
+      saved,
+      ...(doctorPatientDetail.prescriptions||[]).filter(rx=>rx.id!==saved.id)
+    ].sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+
+    editingPrescriptionId=null;
+    renderDoctorPrescriptionList();
+    renderDoctorPrescriptionForm();
+    setPrescriptionSyncStatus('doctor','ok',existed?'Indicación actualizada y compartida':'Indicación creada y compartida');
+    showToast(
+      existed?'Indicación actualizada':'Indicación compartida',
+      'El paciente recibirá la actualización automáticamente.',
+      existed?'PRESCRIPTION_UPDATED':'NEW_PRESCRIPTION'
+    );
+
+    await syncDoctorPrescriptions(p.user_id);
+  }catch(err){
+    setPrescriptionSyncStatus('doctor','error','No se pudo guardar la indicación. Toca aquí para reintentar.');
+    alert(err.message);
+  }finally{
+    if(button)button.disabled=false;
+  }
 }
 
 async function deleteDoctorPrescription(id){
-  const rx=doctorPatientDetail?.prescriptions?.find(x=>x.id===id);if(!rx)return;
+  const rx=doctorPatientDetail?.prescriptions?.find(x=>x.id===id);
+  if(!rx)return;
   if(!confirm(`¿Eliminar la indicación de ${rx.medication_name}? El paciente dejará de verla. La acción quedará auditada.`))return;
+
   try{
+    setPrescriptionSyncStatus('doctor','syncing','Retirando indicación…');
     await dbRpc('delete_prescription_draft',{p_prescription_id:id});
-    if(editingPrescriptionId===id)editingPrescriptionId=null;
+
     doctorPatientDetail.prescriptions=(doctorPatientDetail.prescriptions||[]).filter(p=>p.id!==id);
-    doctorPatientDetailView();
-    await openDoctorPatient(doctorPatientDetail.profile.user_id);
-  }catch(err){alert(err.message)}
+
+    if(editingPrescriptionId===id){
+      editingPrescriptionId=null;
+      renderDoctorPrescriptionForm();
+    }
+
+    renderDoctorPrescriptionList();
+    setPrescriptionSyncStatus('doctor','ok','Indicación retirada');
+    showToast('Indicación retirada','El paciente dejará de verla automáticamente.','PRESCRIPTION_REMOVED');
+    await syncDoctorPrescriptions(doctorPatientDetail.profile.user_id);
+  }catch(err){
+    setPrescriptionSyncStatus('doctor','error','No se pudo retirar la indicación. Toca aquí para reintentar.');
+    alert(err.message);
+  }
 }
 
 async function deleteSentMessage(id,context){
