@@ -16,6 +16,11 @@ let account=null, roles=[], activePortal='PATIENT';
 let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], supportTickets=[];
 let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
 let adminUsers=[], adminTickets=[], adminLoaded=false;
+let notifications=[];
+let realtimeSocket=null, realtimeHeartbeat=null, realtimeReconnectTimer=null;
+let realtimeAttempts=0, realtimeRef=0, realtimeJoinRef=null, realtimeTopic=null;
+let realtimeStatus='offline', realtimeManuallyStopped=false;
+let realtimeFallbackTimer=null;
 
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const parseDate=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(Date.UTC(y,m-1,d))};
@@ -112,6 +117,7 @@ async function refreshSession(){
       refresh_token:data.refresh_token||session.refresh_token,
       expires_at:Date.now()+Number(data.expires_in||3600)*1000
     });
+    try{sendRealtimeAccessToken()}catch{}
     return true;
   }catch{clearStoredSession();session=null;return false}
 }
@@ -185,6 +191,8 @@ function portalTabs(){
 
 function bindCommonHeader(){
   document.getElementById('logout')?.addEventListener('click',logout);
+  document.getElementById('notificationBtn')?.addEventListener('click',showNotificationCenter);
+  updateHeaderNotificationUI();
   document.querySelectorAll('[data-portal]').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const portal=btn.dataset.portal;
@@ -214,6 +222,398 @@ function roleBadge(role){
 function formatDateTime(value){
   if(!value)return '—';
   try{return new Date(value).toLocaleString('es-CL',{dateStyle:'short',timeStyle:'short'})}catch{return value}
+}
+
+
+function unreadCount(){
+  return notifications.filter(n=>!n.read_at).length;
+}
+
+function notificationIcon(type){
+  const icons={
+    NEW_MESSAGE:'💬',
+    NEW_PRESCRIPTION:'📋',
+    NEW_WEIGHT:'⚖️',
+    NEW_PATIENT:'👤',
+    SUPPORT:'🛠️'
+  };
+  return icons[type]||'🔔';
+}
+
+function userIsTyping(){
+  const a=document.activeElement;
+  return !!(a && ['INPUT','TEXTAREA','SELECT'].includes(a.tagName));
+}
+
+function updateHeaderNotificationUI(){
+  const badge=document.getElementById('notificationBadge');
+  const count=unreadCount();
+  if(badge){
+    badge.textContent=count>99?'99+':String(count);
+    badge.classList.toggle('hidden-badge',count===0);
+  }
+  const dot=document.getElementById('realtimeDot');
+  const text=document.getElementById('realtimeText');
+  if(dot){
+    dot.className=`live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}`;
+  }
+  if(text){
+    text.textContent=realtimeStatus==='live'?'En vivo':realtimeStatus==='connecting'?'Conectando…':'Sin conexión';
+  }
+}
+
+function showToast(title,body,type=''){
+  let holder=document.getElementById('toastContainer');
+  if(!holder){
+    holder=document.createElement('div');
+    holder.id='toastContainer';
+    holder.className='toast-container';
+    document.body.appendChild(holder);
+  }
+  const toast=document.createElement('button');
+  toast.type='button';
+  toast.className='app-toast';
+  toast.innerHTML=`<span class="toast-icon">${notificationIcon(type)}</span><span><strong>${esc(title)}</strong><small>${esc(body||'')}</small></span>`;
+  holder.prepend(toast);
+  requestAnimationFrame(()=>toast.classList.add('show'));
+  const remove=()=>{toast.classList.remove('show');setTimeout(()=>toast.remove(),250)};
+  const timer=setTimeout(remove,5200);
+  toast.addEventListener('click',()=>{clearTimeout(timer);remove();showNotificationCenter()});
+}
+
+async function loadNotifications(){
+  if(!currentUser?.id||!session?.access_token){notifications=[];return}
+  try{
+    notifications=await dbGet(`user_notifications?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc&limit=50`)||[];
+  }catch(err){
+    console.warn('Notifications unavailable',err);
+    notifications=[];
+  }
+}
+
+async function markNotificationRead(id){
+  const item=notifications.find(n=>n.id===id);
+  if(!item||item.read_at)return;
+  const readAt=new Date().toISOString();
+  item.read_at=readAt;
+  updateHeaderNotificationUI();
+  try{
+    await dbUpdate('user_notifications',`id=eq.${encodeURIComponent(id)}`,{read_at:readAt});
+  }catch(err){console.warn(err)}
+}
+
+async function markAllNotificationsRead(){
+  const unread=notifications.filter(n=>!n.read_at);
+  if(!unread.length)return;
+  const readAt=new Date().toISOString();
+  unread.forEach(n=>n.read_at=readAt);
+  updateHeaderNotificationUI();
+  try{
+    await dbUpdate('user_notifications',`user_id=eq.${encodeURIComponent(currentUser.id)}&read_at=is.null`,{read_at:readAt});
+  }catch(err){console.warn(err)}
+  renderNotificationList();
+}
+
+function notificationDestinationLabel(n){
+  const map={
+    NEW_MESSAGE:'Abrir conversación',
+    NEW_PRESCRIPTION:'Ver indicación',
+    NEW_WEIGHT:'Abrir paciente',
+    NEW_PATIENT:'Ver pacientes',
+    SUPPORT:'Abrir soporte'
+  };
+  return map[n.type]||'Abrir';
+}
+
+function notificationCenterMarkup(){
+  const list=notifications.slice(0,40);
+  return `<div class="notification-overlay" id="notificationOverlay">
+    <aside class="notification-panel" role="dialog" aria-modal="true" aria-label="Notificaciones">
+      <div class="notification-panel-head">
+        <div>
+          <h3>Notificaciones</h3>
+          <span>${unreadCount()} sin leer</span>
+        </div>
+        <button class="icon-button" id="closeNotifications" aria-label="Cerrar">×</button>
+      </div>
+      <div class="notification-tools">
+        <span class="realtime-pill"><i class="live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}"></i>${realtimeStatus==='live'?'Actualización en vivo':'Reconectando'}</span>
+        <button class="linkbtn" id="markAllRead">Marcar todas como leídas</button>
+      </div>
+      <div id="notificationList" class="notification-list">
+        ${list.length?list.map(notificationItemMarkup).join(''):'<div class="empty-state notification-empty">No tienes notificaciones.</div>'}
+      </div>
+    </aside>
+  </div>`;
+}
+
+function notificationItemMarkup(n){
+  return `<button type="button" class="notification-item ${n.read_at?'':'unread'}" data-notification-id="${n.id}">
+    <span class="notification-item-icon">${notificationIcon(n.type)}</span>
+    <span class="notification-item-content">
+      <strong>${esc(n.title)}</strong>
+      <span>${esc(n.body||'')}</span>
+      <small>${formatDateTime(n.created_at)} · ${notificationDestinationLabel(n)}</small>
+    </span>
+    ${n.read_at?'':'<i class="unread-dot"></i>'}
+  </button>`;
+}
+
+function renderNotificationList(){
+  const el=document.getElementById('notificationList');
+  if(!el)return;
+  el.innerHTML=notifications.length?notifications.slice(0,40).map(notificationItemMarkup).join(''):'<div class="empty-state notification-empty">No tienes notificaciones.</div>';
+  document.querySelectorAll('[data-notification-id]').forEach(btn=>{
+    btn.addEventListener('click',()=>openNotificationById(btn.dataset.notificationId));
+  });
+  const subtitle=document.querySelector('.notification-panel-head span');
+  if(subtitle)subtitle.textContent=`${unreadCount()} sin leer`;
+}
+
+function showNotificationCenter(){
+  document.getElementById('notificationOverlay')?.remove();
+  document.body.insertAdjacentHTML('beforeend',notificationCenterMarkup());
+  document.getElementById('closeNotifications')?.addEventListener('click',()=>document.getElementById('notificationOverlay')?.remove());
+  document.getElementById('notificationOverlay')?.addEventListener('click',e=>{
+    if(e.target?.id==='notificationOverlay')document.getElementById('notificationOverlay')?.remove();
+  });
+  document.getElementById('markAllRead')?.addEventListener('click',markAllNotificationsRead);
+  renderNotificationList();
+}
+
+async function openNotificationById(id){
+  const n=notifications.find(x=>x.id===id);
+  if(!n)return;
+  await markNotificationRead(id);
+  document.getElementById('notificationOverlay')?.remove();
+
+  if(n.type==='NEW_MESSAGE'){
+    if(hasRole('DOCTOR') && n.related_user_id && n.related_user_id!==currentUser.id){
+      activePortal='DOCTOR';
+      localStorage.setItem('pesocare_active_portal','DOCTOR');
+      await openDoctorPatient(n.related_user_id);
+      return;
+    }
+    if(hasRole('PATIENT')){
+      activePortal='PATIENT';
+      localStorage.setItem('pesocare_active_portal','PATIENT');
+      await loadData();
+      render();
+      setTimeout(()=>document.getElementById('patientMessageText')?.scrollIntoView({behavior:'smooth',block:'center'}),120);
+      return;
+    }
+  }
+
+  if(n.type==='NEW_PRESCRIPTION' && hasRole('PATIENT')){
+    activePortal='PATIENT';
+    localStorage.setItem('pesocare_active_portal','PATIENT');
+    await loadData();render();
+    return;
+  }
+
+  if((n.type==='NEW_WEIGHT'||n.type==='NEW_PATIENT') && hasRole('DOCTOR')){
+    activePortal='DOCTOR';
+    localStorage.setItem('pesocare_active_portal','DOCTOR');
+    if(n.type==='NEW_WEIGHT'&&n.related_user_id){
+      await openDoctorPatient(n.related_user_id);
+    }else{
+      doctorPatientDetail=null;
+      await loadData();render();
+    }
+    return;
+  }
+
+  if(n.type==='SUPPORT'&&hasRole('ADMIN')){
+    activePortal='ADMIN';
+    localStorage.setItem('pesocare_active_portal','ADMIN');
+    adminLoaded=false;
+    render();
+    return;
+  }
+
+  await loadData();render();
+}
+
+function sendRealtimeAccessToken(){
+  if(!realtimeSocket||realtimeSocket.readyState!==WebSocket.OPEN||!realtimeTopic||!session?.access_token)return;
+  realtimeSocket.send(JSON.stringify({
+    topic:realtimeTopic,
+    event:'access_token',
+    payload:{access_token:session.access_token},
+    ref:String(++realtimeRef),
+    join_ref:realtimeJoinRef
+  }));
+}
+
+function stopRealtime(){
+  realtimeManuallyStopped=true;
+  if(realtimeReconnectTimer){clearTimeout(realtimeReconnectTimer);realtimeReconnectTimer=null}
+  if(realtimeHeartbeat){clearInterval(realtimeHeartbeat);realtimeHeartbeat=null}
+  if(realtimeFallbackTimer){clearInterval(realtimeFallbackTimer);realtimeFallbackTimer=null}
+  if(realtimeSocket){
+    try{realtimeSocket.onclose=null;realtimeSocket.close(1000,'logout')}catch{}
+  }
+  realtimeSocket=null;
+  realtimeStatus='offline';
+  updateHeaderNotificationUI();
+}
+
+function scheduleRealtimeReconnect(){
+  if(realtimeManuallyStopped||!currentUser?.id)return;
+  const delays=[1000,2000,5000,10000];
+  const delay=delays[Math.min(realtimeAttempts,delays.length-1)];
+  realtimeAttempts+=1;
+  realtimeStatus='connecting';
+  updateHeaderNotificationUI();
+  if(realtimeReconnectTimer)clearTimeout(realtimeReconnectTimer);
+  realtimeReconnectTimer=setTimeout(startRealtime,delay);
+}
+
+function startRealtime(){
+  if(!currentUser?.id||!session?.access_token)return;
+  if(realtimeSocket && (realtimeSocket.readyState===WebSocket.OPEN||realtimeSocket.readyState===WebSocket.CONNECTING))return;
+
+  realtimeManuallyStopped=false;
+  realtimeStatus='connecting';
+  updateHeaderNotificationUI();
+
+  const projectRef=new URL(SUPABASE_URL).hostname.split('.')[0];
+  const url=`wss://${projectRef}.supabase.co/realtime/v1/websocket?apikey=${encodeURIComponent(SUPABASE_KEY)}&vsn=1.0.0`;
+  const ws=new WebSocket(url);
+  realtimeSocket=ws;
+  realtimeTopic=`realtime:pesocare-notifications-${currentUser.id}`;
+
+  ws.onopen=()=>{
+    realtimeAttempts=0;
+    const ref=String(++realtimeRef);
+    realtimeJoinRef=ref;
+    ws.send(JSON.stringify({
+      topic:realtimeTopic,
+      event:'phx_join',
+      payload:{
+        config:{
+          broadcast:{ack:false,self:false},
+          presence:{enabled:false},
+          postgres_changes:[{
+            event:'INSERT',
+            schema:'public',
+            table:'user_notifications',
+            filter:`user_id=eq.${currentUser.id}`
+          }],
+          private:false
+        },
+        access_token:session.access_token
+      },
+      ref,
+      join_ref:ref
+    }));
+
+    if(realtimeHeartbeat)clearInterval(realtimeHeartbeat);
+    realtimeHeartbeat=setInterval(()=>{
+      if(ws.readyState===WebSocket.OPEN){
+        ws.send(JSON.stringify({topic:'phoenix',event:'heartbeat',payload:{},ref:String(++realtimeRef),join_ref:null}));
+      }
+    },20000);
+  };
+
+  ws.onmessage=e=>{
+    let msg;
+    try{msg=JSON.parse(e.data)}catch{return}
+    if(msg.event==='phx_reply' && msg.ref===realtimeJoinRef && msg.payload?.status==='ok'){
+      realtimeStatus='live';
+      realtimeAttempts=0;
+      updateHeaderNotificationUI();
+      return;
+    }
+    if(msg.event==='system' && msg.payload?.status==='ok'){
+      realtimeStatus='live';
+      updateHeaderNotificationUI();
+      return;
+    }
+    if(msg.event==='postgres_changes'){
+      const n=msg.payload?.data?.record;
+      if(n?.user_id===currentUser.id){
+        handleRealtimeNotification(n);
+      }
+    }
+  };
+
+  ws.onerror=()=>{realtimeStatus='connecting';updateHeaderNotificationUI()};
+  ws.onclose=()=>{
+    if(realtimeHeartbeat){clearInterval(realtimeHeartbeat);realtimeHeartbeat=null}
+    realtimeSocket=null;
+    if(!realtimeManuallyStopped)scheduleRealtimeReconnect();
+  };
+
+  if(!realtimeFallbackTimer){
+    realtimeFallbackTimer=setInterval(syncNotificationsFallback,20000);
+  }
+}
+
+async function syncNotificationsFallback(){
+  if(!currentUser?.id||!session?.access_token)return;
+  try{
+    const latest=await dbGet(`user_notifications?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc&limit=50`)||[];
+    const known=new Set(notifications.map(n=>n.id));
+    const fresh=latest.filter(n=>!known.has(n.id)).reverse();
+    notifications=latest;
+    updateHeaderNotificationUI();
+    for(const n of fresh)await handleRealtimeNotification(n,true);
+  }catch{}
+}
+
+async function handleRealtimeNotification(n,fromFallback=false){
+  if(!n?.id)return;
+  const exists=notifications.some(x=>x.id===n.id);
+  if(!exists)notifications.unshift(n);
+  updateHeaderNotificationUI();
+  if(!fromFallback||!exists)showToast(n.title,n.body,n.type);
+
+  try{
+    if(n.type==='NEW_MESSAGE'){
+      if(hasRole('PATIENT')&&n.related_user_id){
+        patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
+        renderPatientMessageThread();
+      }
+      if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id===n.related_user_id){
+        doctorPatientDetail.messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(n.related_user_id)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
+        renderDoctorMessageThread();
+      }
+    }
+
+    if(n.type==='NEW_PRESCRIPTION'&&hasRole('PATIENT')){
+      patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&order=created_at.desc`)||[];
+      if(activePortal==='PATIENT'&&!userIsTyping())render();
+    }
+
+    if(n.type==='NEW_WEIGHT'&&hasRole('DOCTOR')){
+      if(doctorPatientDetail?.profile?.user_id===n.related_user_id&&!userIsTyping()){
+        await openDoctorPatient(n.related_user_id);
+      }else if(activePortal==='DOCTOR'&&!doctorPatientDetail&&!userIsTyping()){
+        await loadData();render();
+      }
+    }
+
+    if(n.type==='NEW_PATIENT'&&hasRole('DOCTOR')&&activePortal==='DOCTOR'&&!userIsTyping()){
+      await loadData();render();
+    }
+
+    if(n.type==='SUPPORT'&&hasRole('ADMIN')){
+      adminLoaded=false;
+      if(activePortal==='ADMIN'&&!userIsTyping())render();
+    }
+  }catch(err){console.warn('Realtime refresh failed',err)}
+}
+
+function renderDoctorMessageThread(){
+  const el=document.getElementById('doctorMessageThread');
+  if(!el||!doctorPatientDetail)return;
+  const messages=doctorPatientDetail.messages||[];
+  el.innerHTML=messages.length?messages.map(m=>`
+    <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}">
+      <div>${esc(m.message)}</div><span>${formatDateTime(m.created_at)}</span>
+    </div>`).join(''):'<div class="empty-state">Aún no hay mensajes.</div>';
+  el.scrollTop=el.scrollHeight;
 }
 
 function brandBlock(subtitle='Seguimiento personal'){
@@ -442,6 +842,7 @@ async function loadData(){
   account=a?.[0]||null;
   const rr=await dbGet(`user_roles?select=role&user_id=eq.${encodeURIComponent(currentUser.id)}`)||[];
   roles=rr.map(r=>r.role);
+  await loadNotifications();
 
   const storedPortal=localStorage.getItem('pesocare_active_portal');
   if(storedPortal&&roles.includes(storedPortal))activePortal=storedPortal;
@@ -485,23 +886,35 @@ async function loadData(){
 }
 
 function render(){
-  if(account?.status!=='ACTIVE')return suspendedView();
-  if(activePortal==='ADMIN'&&hasRole('ADMIN'))return adminView();
-  if(activePortal==='DOCTOR'&&hasRole('DOCTOR')){
-    if(doctorPatientDetail)return doctorPatientDetailView();
-    return doctorView();
-  }
-  return profile?dashboardView():initialProfileView();
+  let result;
+  if(account?.status!=='ACTIVE')result=suspendedView();
+  else if(activePortal==='ADMIN'&&hasRole('ADMIN'))result=adminView();
+  else if(activePortal==='DOCTOR'&&hasRole('DOCTOR')){
+    result=doctorPatientDetail?doctorPatientDetailView():doctorView();
+  }else result=profile?dashboardView():initialProfileView();
+  setTimeout(startRealtime,0);
+  return result;
 }
 
 function header(){
   const display=doctorProfile?.display_name||profile?.full_name||account?.display_name||currentUser?.email||'';
+  const count=unreadCount();
   return `<div class="top">
     <div class="brandrow">
       <img src="${BRAND_LOGO_URL}" alt="Logo PesoCare" class="brand-image brand-image-small" onerror="this.style.display='none'">
       <div><div class="brand">PesoCare</div><div class="muted">${esc(display)}</div></div>
     </div>
-    <button class="secondary" id="logout">Salir</button>
+    <div class="top-actions">
+      <span class="realtime-indicator" title="Estado de actualización">
+        <i id="realtimeDot" class="live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}"></i>
+        <span id="realtimeText">${realtimeStatus==='live'?'En vivo':realtimeStatus==='connecting'?'Conectando…':'Sin conexión'}</span>
+      </span>
+      <button class="notification-button" id="notificationBtn" type="button" aria-label="Notificaciones">
+        <span aria-hidden="true">🔔</span>
+        <b id="notificationBadge" class="notification-badge ${count?'':'hidden-badge'}">${count>99?'99+':count}</b>
+      </button>
+      <button class="secondary" id="logout">Salir</button>
+    </div>
   </div>${portalTabs()}`;
 }
 
@@ -1022,6 +1435,7 @@ function renderPatientMessageThread(){
   const el=document.getElementById('patientMessageThread');
   if(!select||!el)return;
   const doctorId=select.value;
+  notifications.filter(n=>!n.read_at&&n.type==='NEW_MESSAGE'&&n.related_user_id===doctorId).forEach(n=>markNotificationRead(n.id));
   const messages=patientMessages.filter(m=>m.doctor_user_id===doctorId);
   el.innerHTML=messages.length?messages.map(m=>`
     <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}">
@@ -1149,6 +1563,8 @@ async function openDoctorPatient(patientId){
     const prescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
     const messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
     doctorPatientDetail={profile:p,records:recs,prescriptions,messages};
+    const matching=notifications.filter(n=>!n.read_at&&n.type==='NEW_MESSAGE'&&n.related_user_id===patientId);
+    for(const n of matching)markNotificationRead(n.id);
     doctorPatientDetailView();
   }catch(err){alert(err.message)}
 }
@@ -1432,6 +1848,7 @@ async function editPlan(){
 }
 
 async function logout(){
+  stopRealtime();
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
   clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];doctorProfile=null;doctorPatients=[];doctorPatientDetail=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
@@ -1439,7 +1856,7 @@ async function logout(){
 async function boot(){
   try{
     const confirmed=captureConfirmationHash();
-    if(await ensureSession()){await loadData();render()}
+    if(await ensureSession()){await loadData();render();startRealtime()}
     else loginView(confirmed?'Correo confirmado. Ya puedes ingresar.':'');
   }catch(err){
     console.error(err);

@@ -258,3 +258,81 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
 .badge-row{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.admin-hero{display:flex;align-items:center;justify-content:space-between;gap:12px}.admin-user-list{margin-top:12px}
 .admin-user-card{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid #eaecf0}.admin-user-main{min-width:0}.admin-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-content:flex-start}.loading{padding:25px;text-align:center;color:#667085}
 @media(max-width:700px){.card-head,.doctor-row,.patient-row,.support-admin-row,.admin-user-card{align-items:flex-start;flex-direction:column}.inline-form,.message-form{flex-direction:column;align-items:stretch}.admin-actions{justify-content:flex-start}.portal-tabs{margin-top:4px}}
+
+
+/* V14 — Realtime + Notification Center */
+.top-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.realtime-indicator{display:inline-flex;align-items:center;gap:6px;color:#667085;font-size:.76rem;white-space:nowrap}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#98a2b3}
+.live-dot.online{background:#12b76a;box-shadow:0 0 0 3px rgba(18,183,106,.12)}
+.live-dot.connecting{background:#f79009;animation:pulse-live 1.2s infinite}
+.live-dot.offline{background:#98a2b3}
+@keyframes pulse-live{0%,100%{opacity:1}50%{opacity:.35}}
+
+.notification-button{
+  position:relative;display:grid;place-items:center;
+  width:44px;height:44px;min-height:44px;padding:0;
+  border:1px solid #d0d5dd;border-radius:12px;background:#fff;
+  font-size:1.15rem;
+}
+.notification-badge{
+  position:absolute;right:-5px;top:-6px;min-width:20px;height:20px;
+  padding:0 5px;border-radius:999px;background:#d92d20;color:#fff;
+  display:grid;place-items:center;font-size:.68rem;font-weight:800;
+  border:2px solid #f4f7fb;
+}
+.hidden-badge{display:none!important}
+
+.notification-overlay{
+  position:fixed;inset:0;background:rgba(16,24,40,.38);
+  z-index:9998;display:flex;justify-content:flex-end;
+}
+.notification-panel{
+  width:min(430px,100%);height:100%;background:#fff;
+  box-shadow:-10px 0 30px rgba(16,24,40,.14);
+  padding:16px;overflow-y:auto;
+}
+.notification-panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;border-bottom:1px solid #eaecf0;padding-bottom:12px}
+.notification-panel-head h3{margin:0;font-size:1.15rem}
+.notification-panel-head span{display:block;color:#667085;font-size:.8rem;margin-top:3px}
+.icon-button{width:36px;height:36px;min-height:36px;padding:0;border:1px solid #d0d5dd;background:#fff;color:#344054;font-size:1.4rem}
+.notification-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 0}
+.realtime-pill{display:inline-flex;align-items:center;gap:6px;font-size:.74rem;color:#667085}
+.notification-list{display:flex;flex-direction:column}
+.notification-item{
+  width:100%;min-height:auto;border:0;border-bottom:1px solid #eaecf0;border-radius:0;
+  padding:12px 5px;background:#fff;color:#182230;text-align:left;
+  display:grid;grid-template-columns:34px 1fr 10px;gap:8px;align-items:start;
+}
+.notification-item.unread{background:#f5f9ff}
+.notification-item:hover{background:#f8fafc}
+.notification-item-icon{font-size:1.15rem;line-height:1.4}
+.notification-item-content{display:flex;flex-direction:column;gap:3px;min-width:0}
+.notification-item-content strong{font-size:.9rem}
+.notification-item-content span{color:#475467;font-size:.82rem;line-height:1.3}
+.notification-item-content small{color:#98a2b3;font-size:.7rem}
+.unread-dot{width:8px;height:8px;border-radius:50%;background:#175cd3;margin-top:5px}
+.notification-empty{text-align:center;padding:34px 10px}
+
+.toast-container{
+  position:fixed;right:16px;top:16px;z-index:10000;
+  display:flex;flex-direction:column;gap:8px;width:min(380px,calc(100vw - 32px));
+}
+.app-toast{
+  width:100%;min-height:auto;display:grid;grid-template-columns:36px 1fr;gap:8px;
+  text-align:left;padding:12px;border:1px solid #b2ddff;background:#fff;
+  color:#182230;border-radius:14px;box-shadow:0 12px 30px rgba(16,24,40,.16);
+  transform:translateY(-12px);opacity:0;transition:.22s ease;
+}
+.app-toast.show{transform:translateY(0);opacity:1}
+.toast-icon{font-size:1.2rem}
+.app-toast span:last-child{display:flex;flex-direction:column;gap:3px}
+.app-toast strong{font-size:.9rem}
+.app-toast small{color:#667085;font-size:.78rem;line-height:1.3}
+
+@media(max-width:700px){
+  .top-actions{gap:6px}
+  .realtime-indicator span{display:none}
+  .notification-panel{width:100%}
+  .toast-container{top:max(12px,env(safe-area-inset-top));right:12px;width:calc(100vw - 24px)}
+}
