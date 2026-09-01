@@ -6,6 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
+const APP_VERSION='14.2';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
 const SIGNUP_COOLDOWN_KEY='pesocare_signup_cooldown_until';
@@ -37,7 +38,7 @@ const weekOf=date=>profile?Math.max(0,Math.floor((parseDate(date)-parseDate(prof
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 function shell(content){
-  return `<main class="shell">${content}<div class="footer">PesoCare · Seguimiento personal de peso</div></main>`;
+  return `<main class="shell">${content}<div class="footer">PesoCare · Seguimiento personal de peso · v${APP_VERSION}</div></main>`;
 }
 
 function authHeaders(token){
@@ -164,11 +165,24 @@ async function dbUpdate(table,filter,obj){
 
 
 async function dbRpc(name,params={}){
-  return jsonFetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`,{
-    method:'POST',
-    headers:{...authHeaders(session.access_token),'Prefer':'return=representation'},
-    body:JSON.stringify(params)
-  });
+  try{
+    return await jsonFetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`,{
+      method:'POST',
+      headers:{...authHeaders(session.access_token),'Prefer':'return=representation'},
+      body:JSON.stringify(params)
+    });
+  }catch(err){
+    const raw=String(err?.message||err);
+    const friendly=
+      /only the sender/i.test(raw)?'Solo puedes eliminar mensajes que tú enviaste.':
+      /care link inactive/i.test(raw)?'La relación médico-paciente ya no está activa.':
+      /not a participant/i.test(raw)?'No tienes permiso para modificar esta conversación.':
+      /prescription not found/i.test(raw)?'No se encontró la indicación. Actualiza la pantalla e inténtalo nuevamente.':
+      /message not found/i.test(raw)?'No se encontró el mensaje. Es posible que ya haya sido eliminado.':
+      /not authorized/i.test(raw)?'Tu sesión no tiene autorización para realizar esta acción.':
+      raw;
+    throw new Error(friendly);
+  }
 }
 
 async function invokeFunction(name,body){
@@ -1443,7 +1457,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'v13'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'v14.2'}
       });
       msg.className='notice success';msg.textContent='Ticket enviado a PesoCare Admin.';
       supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];

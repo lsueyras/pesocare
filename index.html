@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="theme-color" content="#175cd3">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -10,7 +13,7 @@
   <title>PesoCare</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=14.1">
+  <link rel="stylesheet" href="./styles.css?v=14.2">
 </head>
 <body>
   <div id="app">
@@ -23,6 +26,20 @@
       </section>
     </main>
   </div>
-  <script defer src="./app.js?v=14.1"></script>
+  <script defer src="./app.js?v=14.2"></script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        try {
+          const registration = await navigator.serviceWorker.register('./sw.js?v=14.2', { updateViaCache: 'none' });
+          await registration.update();
+        } catch (e) {
+          console.warn('PesoCare service worker update:', e);
+        }
+      });
+    }
+  </script>
+
 </body>
 </html>

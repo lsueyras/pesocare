@@ -134,3 +134,13 @@ https://lsueyras.github.io/pesocare/
 - Médico o paciente pueden eliminar el historial visible completo de una conversación con doble confirmación.
 - Eliminaciones son lógicas (soft delete), no borrado físico, para mantener trazabilidad administrativa.
 - Notificaciones Realtime actualizan automáticamente indicaciones y conversaciones modificadas/eliminadas.
+
+
+## V14.2 — Corrección eliminación + actualización forzada
+- Backend: ampliado constraint de tipos de notificación para MESSAGE_DELETED, CONVERSATION_CLEARED, PRESCRIPTION_UPDATED y PRESCRIPTION_REMOVED.
+- Verificadas por transacción las RPC de eliminar mensaje, limpiar conversación y eliminar indicación.
+- Service Worker actualizado con `updateViaCache: none`.
+- HTML/JS/CSS principales se recuperan con estrategia network/no-store.
+- Se muestra `v14.2` en el pie de la aplicación para validar qué versión está ejecutando cada dispositivo.
+- Acciones Editar/Eliminar y Eliminar historial forzadas visibles en escritorio y móvil.
+- Mensajes de error de las RPC traducidos a respuestas más claras.

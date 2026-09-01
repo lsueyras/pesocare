@@ -353,3 +353,28 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
 .message-delete{border:0;background:transparent;color:#b42318;min-height:auto;padding:0;font-size:.68rem;text-decoration:underline}
 .message-delete:hover{background:transparent;color:#912018}
 @media(max-width:700px){.prescription-card-head{flex-direction:column}.form-actions .primary,.form-actions .secondary{width:100%}.conversation-tools{justify-content:flex-start}}
+
+/* V14.2 — action visibility + cache verification */
+.prescription-actions{
+  display:flex !important;
+  visibility:visible !important;
+  opacity:1 !important;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.prescription-actions button{
+  display:inline-flex !important;
+  visibility:visible !important;
+  opacity:1 !important;
+}
+.message-delete{
+  display:inline-block !important;
+  visibility:visible !important;
+  opacity:1 !important;
+}
+#doctorClearConversation,
+#patientClearConversation{
+  display:inline-block !important;
+  visibility:visible !important;
+}
+.footer{font-variant-numeric:tabular-nums}
