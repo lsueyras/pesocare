@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='15.1';
+const APP_VERSION='15.2';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -38,6 +38,7 @@ let notificationPreferences={push_enabled:true,messages:true,prescriptions:true,
 let pushBrowserSubscription=null;
 let pushSettingsLoaded=false;
 let launchNotificationId=new URLSearchParams(location.search).get('notification');
+let sessionRefreshPromise=null;
 
 
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
@@ -684,7 +685,10 @@ async function jsonFetch(url,opts={}){
   if(text){try{data=JSON.parse(text)}catch{data=text}}
   if(!res.ok){
     const msg=data?.msg||data?.message||data?.error_description||data?.error||`Error ${res.status}`;
-    throw new Error(msg);
+    const err=new Error(msg);
+    err.status=res.status;
+    err.data=data;
+    throw err;
   }
   return data;
 }
@@ -739,19 +743,72 @@ function captureConfirmationHash(){
 }
 
 async function refreshSession(){
+  if(sessionRefreshPromise)return sessionRefreshPromise;
   if(!session?.refresh_token)return false;
+
+  const refreshToken=session.refresh_token;
+
+  sessionRefreshPromise=(async()=>{
+    try{
+      const data=await jsonFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,{
+        method:'POST',
+        headers:authHeaders(),
+        body:JSON.stringify({refresh_token:refreshToken})
+      });
+
+      if(!data?.access_token)throw new Error('Supabase no devolvió un nuevo access token.');
+
+      saveSession({
+        access_token:data.access_token,
+        refresh_token:data.refresh_token||refreshToken,
+        expires_at:Date.now()+Number(data.expires_in||3600)*1000
+      });
+
+      try{sendRealtimeAccessToken()}catch{}
+      return true;
+    }catch(err){
+      console.warn('Session refresh failed',err);
+
+      // Only clear if the session still uses the token that actually failed.
+      // This prevents one concurrent request from deleting a session
+      // already renewed by another context/tab.
+      if(session?.refresh_token===refreshToken){
+        clearStoredSession();
+        session=null;
+      }
+      return false;
+    }finally{
+      sessionRefreshPromise=null;
+    }
+  })();
+
+  return sessionRefreshPromise;
+}
+
+async function ensureFreshAccessToken(){
+  if(!session?.access_token)return false;
+  if(session.expires_at && Date.now()>session.expires_at-90000){
+    return refreshSession();
+  }
+  return true;
+}
+
+async function withSessionRetry(requestFn){
+  if(!session?.access_token)throw new Error('La sesión no está disponible. Vuelve a iniciar sesión.');
+
+  await ensureFreshAccessToken();
+
   try{
-    const data=await jsonFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,{
-      method:'POST',headers:authHeaders(),body:JSON.stringify({refresh_token:session.refresh_token})
-    });
-    saveSession({
-      access_token:data.access_token,
-      refresh_token:data.refresh_token||session.refresh_token,
-      expires_at:Date.now()+Number(data.expires_in||3600)*1000
-    });
-    try{sendRealtimeAccessToken()}catch{}
-    return true;
-  }catch{clearStoredSession();session=null;return false}
+    return await requestFn();
+  }catch(err){
+    if(Number(err?.status)===401 && session?.refresh_token){
+      const refreshed=await refreshSession();
+      if(refreshed){
+        return await requestFn();
+      }
+    }
+    throw err;
+  }
 }
 
 async function ensureSession(){
@@ -775,39 +832,41 @@ async function ensureSession(){
 }
 
 async function dbGet(path){
-  return jsonFetch(`${SUPABASE_URL}/rest/v1/${path}`,{
+  return withSessionRetry(()=>jsonFetch(`${SUPABASE_URL}/rest/v1/${path}`,{
     cache:'no-store',
     headers:{
       ...authHeaders(session.access_token),
       'Accept':'application/json',
       'Cache-Control':'no-cache'
     }
-  });
+  }));
 }
+
 async function dbInsert(table,obj){
-  return jsonFetch(`${SUPABASE_URL}/rest/v1/${table}`,{
+  return withSessionRetry(()=>jsonFetch(`${SUPABASE_URL}/rest/v1/${table}`,{
     method:'POST',
     headers:{...authHeaders(session.access_token),'Prefer':'return=representation'},
     body:JSON.stringify(obj)
-  });
+  }));
 }
+
 async function dbUpdate(table,filter,obj){
-  return jsonFetch(`${SUPABASE_URL}/rest/v1/${table}?${filter}`,{
+  return withSessionRetry(()=>jsonFetch(`${SUPABASE_URL}/rest/v1/${table}?${filter}`,{
     method:'PATCH',
     headers:{...authHeaders(session.access_token),'Prefer':'return=representation'},
     body:JSON.stringify(obj)
-  });
+  }));
 }
 
 
 
 async function dbRpc(name,params={}){
   try{
-    return await jsonFetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`,{
+    return await withSessionRetry(()=>jsonFetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`,{
       method:'POST',
       headers:{...authHeaders(session.access_token),'Prefer':'return=representation'},
       body:JSON.stringify(params)
-    });
+    }));
   }catch(err){
     const raw=String(err?.message||err);
     const friendly=
@@ -816,23 +875,34 @@ async function dbRpc(name,params={}){
       /not a participant/i.test(raw)?'No tienes permiso para modificar esta conversación.':
       /prescription not found/i.test(raw)?'No se encontró la indicación. Actualiza la pantalla e inténtalo nuevamente.':
       /message not found/i.test(raw)?'No se encontró el mensaje. Es posible que ya haya sido eliminado.':
+      /control not found/i.test(raw)?'No se encontró el control. Es posible que ya haya sido modificado.':
       /not authorized/i.test(raw)?'Tu sesión no tiene autorización para realizar esta acción.':
+      Number(err?.status)===401?'Tu sesión venció y no pudo renovarse automáticamente. Vuelve a iniciar sesión.':
       raw;
-    throw new Error(friendly);
+    const wrapped=new Error(friendly);
+    wrapped.status=err?.status;
+    throw wrapped;
   }
 }
 
 async function invokeFunction(name,body){
-  const res=await fetch(`${SUPABASE_URL}/functions/v1/${name}`,{
-    method:'POST',
-    headers:{...authHeaders(session?.access_token),'Content-Type':'application/json'},
-    body:JSON.stringify(body)
+  return withSessionRetry(async()=>{
+    const res=await fetch(`${SUPABASE_URL}/functions/v1/${name}`,{
+      method:'POST',
+      headers:{...authHeaders(session?.access_token),'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    const text=await res.text();
+    let data={};
+    if(text){try{data=JSON.parse(text)}catch{data={error:text}}}
+    if(!res.ok){
+      const err=new Error(data?.error||`Error ${res.status}`);
+      err.status=res.status;
+      err.data=data;
+      throw err;
+    }
+    return data;
   });
-  const text=await res.text();
-  let data={};
-  if(text){try{data=JSON.parse(text)}catch{data={error:text}}}
-  if(!res.ok)throw new Error(data?.error||`Error ${res.status}`);
-  return data;
 }
 
 const hasRole=role=>roles.includes(role);
@@ -2040,8 +2110,14 @@ function bindPatientSubTabs(){
 function bindLifecycleSync(){
   if(lifecycleSyncBound)return;
   lifecycleSyncBound=true;
-  const refresh=()=>{
-    if(document.visibilityState==='visible')syncVisibleContext();
+  const refresh=async()=>{
+    if(document.visibilityState!=='visible')return;
+    try{
+      await ensureFreshAccessToken();
+      await syncVisibleContext();
+    }catch(err){
+      console.warn('Visible context refresh failed',err);
+    }
   };
   window.addEventListener('focus',refresh);
   document.addEventListener('visibilitychange',refresh);
@@ -2880,7 +2956,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.1'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.2'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -3918,6 +3994,7 @@ async function editPlan(){
 
 async function logout(){
   stopRealtime();
+  sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
   clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPatientDetail=null;editingPrescriptionId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();

@@ -298,3 +298,13 @@ https://lsueyras.github.io/pesocare/
   - bodycare_create_control
   - bodycare_cancel_control
 - Las notificaciones NEW_CONTROL y CONTROL_CANCELLED usan la preferencia de actualizaciones de seguimiento.
+
+
+## BodyCare V15.2 — Recuperación automática de sesión
+- Corrige respuestas 401 observadas en escritorio después de expirar access_token.
+- Renovación single-flight: varias consultas simultáneas comparten una sola renovación.
+- REST, RPC y Edge Functions reintentan automáticamente una vez después de renovar sesión.
+- Renovación proactiva 90 segundos antes del vencimiento.
+- Al volver a la pestaña/aplicación, BodyCare valida el token antes de sincronizar.
+- Evita que una renovación concurrente borre una sesión ya actualizada.
+- Protege mensajes, prescripciones, controles, notificaciones, soporte y futuras APIs.
