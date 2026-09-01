@@ -471,3 +471,11 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
 /* BodyCare brand build */
 .brand-image{object-fit:contain}
 .brand-image-small{background:#fff;border-radius:12px}
+
+/* BodyCare V14.6 — transactional chat */
+.pending-message{
+  opacity:.68;
+}
+.pending-message .message-meta{
+  font-style:italic;
+}

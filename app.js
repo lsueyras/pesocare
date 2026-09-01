@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='14.5';
+const APP_VERSION='14.6';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
@@ -593,7 +593,7 @@ function startRealtime(){
   };
 
   if(!realtimeFallbackTimer){
-    realtimeFallbackTimer=setInterval(syncNotificationsFallback,20000);
+    realtimeFallbackTimer=setInterval(syncNotificationsFallback,8000);
   }
 }
 
@@ -659,9 +659,9 @@ function renderDoctorMessageThread(){
   if(!el||!doctorPatientDetail)return;
   const messages=(doctorPatientDetail.messages||[]).filter(m=>!m.deleted_at);
   el.innerHTML=messages.length?messages.map(m=>`
-    <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}">
+    <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'} ${m.pending?'pending-message':''}">
       <div>${esc(m.message)}</div>
-      <div class="message-meta"><span>${formatDateTime(m.created_at)}</span>${m.sender_user_id===currentUser.id?`<button type="button" class="message-delete" data-delete-message="${m.id}" data-message-context="doctor">Eliminar</button>`:''}</div>
+      <div class="message-meta"><span>${m.pending?'Enviando…':formatDateTime(m.created_at)}</span>${m.sender_user_id===currentUser.id&&!m.pending?`<button type="button" class="message-delete" data-delete-message="${m.id}" data-message-context="doctor">Eliminar</button>`:''}</div>
     </div>`).join(''):'<div class="empty-state">Aún no hay mensajes.</div>';
   el.querySelectorAll('[data-delete-message]').forEach(btn=>btn.addEventListener('click',()=>deleteSentMessage(btn.dataset.deleteMessage,btn.dataset.messageContext)));
   el.scrollTop=el.scrollHeight;
@@ -1111,14 +1111,14 @@ function startContextSync(){
 
   if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
     syncPatientMedicalData();
-    contextSyncTimer=setInterval(()=>syncPatientMedicalData(),4000);
+    contextSyncTimer=setInterval(()=>syncPatientMedicalData(),3000);
   }else if(activePortal==='PATIENT'&&activePatientTab==='SUPPORT'){
     syncSupportTickets();
     contextSyncTimer=setInterval(()=>syncSupportTickets(),10000);
   }else if(activePortal==='DOCTOR'&&doctorPatientDetail?.profile?.user_id){
     const patientId=doctorPatientDetail.profile.user_id;
     syncDoctorMedicalData(patientId);
-    contextSyncTimer=setInterval(()=>syncDoctorMedicalData(patientId),4000);
+    contextSyncTimer=setInterval(()=>syncDoctorMedicalData(patientId),3000);
   }
 }
 
@@ -1568,7 +1568,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.5'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.6'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -1678,14 +1678,15 @@ async function syncPatientMessages(){
       const requestedDoctor=selectedPatientDoctorId();
       if(!requestedDoctor)break;
 
-      const rows=await dbGet(
-        `care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}`+
-        `&doctor_user_id=eq.${encodeURIComponent(requestedDoctor)}`+
-        `&deleted_at=is.null&order=created_at.asc`
-      );
+      const rows=await dbRpc('bodycare_get_conversation',{
+        p_doctor_user_id:requestedDoctor,
+        p_patient_user_id:currentUser.id
+      });
 
       if(selectedPatientDoctorId()===requestedDoctor){
-        patientMessages=(rows||[]).filter(m=>!m.deleted_at);
+        patientMessages=(rows||[])
+          .filter(m=>!m.deleted_at)
+          .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
         renderPatientMessageThread();
         setChatSyncStatus('patient','ok',`Sincronizado · ${patientMessages.length} mensaje${patientMessages.length===1?'':'s'}`);
       }
@@ -1742,14 +1743,16 @@ async function syncDoctorMessages(patientId){
   try{
     do{
       doctorMessagesSyncPending=false;
-      const rows=await dbGet(
-        `care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}`+
-        `&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}`+
-        `&deleted_at=is.null&order=created_at.asc`
-      );
+
+      const rows=await dbRpc('bodycare_get_conversation',{
+        p_doctor_user_id:currentUser.id,
+        p_patient_user_id:patientId
+      });
 
       if(doctorPatientDetail?.profile?.user_id===patientId){
-        doctorPatientDetail.messages=(rows||[]).filter(m=>!m.deleted_at);
+        doctorPatientDetail.messages=(rows||[])
+          .filter(m=>!m.deleted_at)
+          .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
         renderDoctorMessageThread();
         setChatSyncStatus('doctor','ok',`Sincronizado · ${doctorPatientDetail.messages.length} mensaje${doctorPatientDetail.messages.length===1?'':'s'}`);
       }
@@ -1807,9 +1810,9 @@ function renderPatientMessageThread(){
   notifications.filter(n=>!n.read_at&&['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'].includes(n.type)&&n.related_user_id===doctorId).forEach(n=>markNotificationRead(n.id));
   const messages=patientMessages.filter(m=>m.doctor_user_id===doctorId&&!m.deleted_at);
   el.innerHTML=messages.length?messages.map(m=>`
-    <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}">
+    <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'} ${m.pending?'pending-message':''}">
       <div>${esc(m.message)}</div>
-      <div class="message-meta"><span>${formatDateTime(m.created_at)}</span>${m.sender_user_id===currentUser.id?`<button type="button" class="message-delete" data-delete-message="${m.id}" data-message-context="patient">Eliminar</button>`:''}</div>
+      <div class="message-meta"><span>${m.pending?'Enviando…':formatDateTime(m.created_at)}</span>${m.sender_user_id===currentUser.id&&!m.pending?`<button type="button" class="message-delete" data-delete-message="${m.id}" data-message-context="patient">Eliminar</button>`:''}</div>
     </div>`).join(''):'<div class="empty-state">Aún no hay mensajes.</div>';
   el.querySelectorAll('[data-delete-message]').forEach(btn=>btn.addEventListener('click',()=>deleteSentMessage(btn.dataset.deleteMessage,btn.dataset.messageContext)));
   el.scrollTop=el.scrollHeight;
@@ -1817,6 +1820,7 @@ function renderPatientMessageThread(){
 
 async function sendPatientMessage(e){
   e.preventDefault();
+
   const doctorId=document.getElementById('patientDoctorSelect')?.value;
   const input=document.getElementById('patientMessageText');
   const message=input?.value.trim();
@@ -1825,25 +1829,51 @@ async function sendPatientMessage(e){
   const button=e.submitter||e.target.querySelector('button[type="submit"]');
   if(button)button.disabled=true;
 
+  const tempId=`pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const pendingRow={
+    id:tempId,
+    doctor_user_id:doctorId,
+    patient_user_id:currentUser.id,
+    sender_user_id:currentUser.id,
+    message,
+    created_at:new Date().toISOString(),
+    pending:true
+  };
+
+  patientMessages=[
+    ...patientMessages.filter(m=>!String(m.id).startsWith('pending-')),
+    pendingRow
+  ].sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+
+  input.value='';
+  renderPatientMessageThread();
+  setChatSyncStatus('patient','syncing','Enviando mensaje…');
+
   try{
-    const inserted=await dbInsert('care_messages',{
-      doctor_user_id:doctorId,
-      patient_user_id:currentUser.id,
-      sender_user_id:currentUser.id,
-      message
+    const rows=await dbRpc('bodycare_send_message',{
+      p_doctor_user_id:doctorId,
+      p_patient_user_id:currentUser.id,
+      p_message:message
     });
 
-    input.value='';
+    const saved=Array.isArray(rows)?rows[0]:rows;
 
-    const row=Array.isArray(inserted)?inserted[0]:null;
-    if(row&&!row.deleted_at){
-      patientMessages=[...patientMessages.filter(m=>m.id!==row.id),row]
-        .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
-      renderPatientMessageThread();
+    patientMessages=patientMessages.filter(m=>m.id!==tempId);
+    if(saved?.id){
+      patientMessages=[
+        ...patientMessages.filter(m=>m.id!==saved.id),
+        saved
+      ].sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
     }
 
+    renderPatientMessageThread();
+    setChatSyncStatus('patient','ok','Mensaje enviado');
     await syncPatientMessages();
   }catch(err){
+    patientMessages=patientMessages.filter(m=>m.id!==tempId);
+    renderPatientMessageThread();
+    input.value=message;
+    setChatSyncStatus('patient','error','No se pudo enviar. Toca aquí para reintentar.');
     alert(err.message);
   }finally{
     if(button)button.disabled=false;
@@ -2116,35 +2146,60 @@ async function clearConversation(doctorId,patientId,context){
 
 async function sendDoctorMessage(e){
   e.preventDefault();
+
   const p=doctorPatientDetail.profile;
   const input=document.getElementById('doctorMessageText');
-  const message=input.value.trim();
+  const message=input?.value.trim();
   if(!message)return;
 
   const button=e.submitter||e.target.querySelector('button[type="submit"]');
   if(button)button.disabled=true;
 
+  const tempId=`pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const pendingRow={
+    id:tempId,
+    doctor_user_id:currentUser.id,
+    patient_user_id:p.user_id,
+    sender_user_id:currentUser.id,
+    message,
+    created_at:new Date().toISOString(),
+    pending:true
+  };
+
+  doctorPatientDetail.messages=[
+    ...(doctorPatientDetail.messages||[]).filter(m=>!String(m.id).startsWith('pending-')),
+    pendingRow
+  ].sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+
+  input.value='';
+  renderDoctorMessageThread();
+  setChatSyncStatus('doctor','syncing','Enviando mensaje…');
+
   try{
-    const inserted=await dbInsert('care_messages',{
-      doctor_user_id:currentUser.id,
-      patient_user_id:p.user_id,
-      sender_user_id:currentUser.id,
-      message
+    const rows=await dbRpc('bodycare_send_message',{
+      p_doctor_user_id:currentUser.id,
+      p_patient_user_id:p.user_id,
+      p_message:message
     });
 
-    input.value='';
+    const saved=Array.isArray(rows)?rows[0]:rows;
 
-    const row=Array.isArray(inserted)?inserted[0]:null;
-    if(row&&!row.deleted_at){
+    doctorPatientDetail.messages=(doctorPatientDetail.messages||[]).filter(m=>m.id!==tempId);
+    if(saved?.id){
       doctorPatientDetail.messages=[
-        ...(doctorPatientDetail.messages||[]).filter(m=>m.id!==row.id),
-        row
+        ...(doctorPatientDetail.messages||[]).filter(m=>m.id!==saved.id),
+        saved
       ].sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
-      renderDoctorMessageThread();
     }
 
+    renderDoctorMessageThread();
+    setChatSyncStatus('doctor','ok','Mensaje enviado');
     await syncDoctorMessages(p.user_id);
   }catch(err){
+    doctorPatientDetail.messages=(doctorPatientDetail.messages||[]).filter(m=>m.id!==tempId);
+    renderDoctorMessageThread();
+    input.value=message;
+    setChatSyncStatus('doctor','error','No se pudo enviar. Toca aquí para reintentar.');
     alert(err.message);
   }finally{
     if(button)button.disabled=false;

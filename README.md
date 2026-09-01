@@ -196,3 +196,15 @@ https://lsueyras.github.io/pesocare/
 - Notificaciones del backend Supabase migradas de PesoCare a BodyCare.
 - Se mantienen nombres técnicos internos y claves localStorage para conservar sesiones y compatibilidad.
 - No se renombra todavía el repositorio GitHub ni el proyecto Supabase.
+
+
+## BodyCare V14.6 — Chat transaccional
+- `bodycare_send_message`: envío de chat mediante RPC transaccional en Supabase.
+- `bodycare_get_conversation`: lectura de conversación mediante RPC dedicada.
+- Se elimina el uso de INSERT/GET REST genérico para el chat.
+- El mensaje enviado aparece de inmediato en UI con estado `Enviando…`.
+- La misma operación devuelve la fila persistida y reemplaza el mensaje temporal.
+- El receptor sigue recibiendo Realtime mediante `user_notifications` y recupera el chat vía RPC.
+- Polling de respaldo de conversación cada 3 s.
+- Sincronización de notificaciones de respaldo cada 8 s.
+- Compatible con iPhone Safari/PWA y escritorio.
