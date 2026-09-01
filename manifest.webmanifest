@@ -1,7 +1,7 @@
 {
-  "name": "PesoCare",
-  "short_name": "PesoCare",
-  "description": "Seguimiento personal de peso",
+  "name": "BodyCare · Salud y progreso",
+  "short_name": "BodyCare",
+  "description": "Seguimiento personal de salud, progreso, interacción médica e indicaciones.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -9,9 +9,15 @@
   "theme_color": "#175cd3",
   "icons": [
     {
-      "src": "./icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]

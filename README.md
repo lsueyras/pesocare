@@ -155,3 +155,44 @@ https://lsueyras.github.io/pesocare/
 - Prescripciones retiradas desaparecen del paciente inmediatamente sin hacer un `render()` completo.
 - Eventos Realtime actualizan directamente los componentes de mensaje/prescripción.
 - Filtros defensivos de `deleted_at` tanto en backend como frontend.
+
+
+## V14.4 — Reorganización + sincronización estable
+- Portal paciente separado en:
+  - Seguimiento
+  - Mi médico
+  - Soporte
+- Mensajes e indicaciones dejan de compartir pantalla con el seguimiento de peso.
+- Soporte tiene su propia pestaña y listado de solicitudes.
+- Sincronización médica:
+  - Realtime como acelerador;
+  - polling de respaldo cada 2,5 s cuando la pestaña médica está abierta;
+  - actualización al volver a la app o recuperar foco;
+  - control de secuencia para ignorar respuestas antiguas de consultas asincrónicas.
+- Médico y paciente leen siempre mensajes/prescripciones activas desde Supabase.
+- Se evita que una respuesta antigua vuelva a pintar historial eliminado.
+- Consultas activas optimizadas con índices parciales en Supabase.
+
+
+## V14.5 — Corrección chat iPhone
+- Mensajes y prescripciones tienen sincronización independiente.
+- No se inicia otra consulta del mismo recurso mientras una esté en curso.
+- Si llega una interacción durante la consulta, se realiza una segunda sincronización al finalizar.
+- La consulta del paciente trae solo la conversación del médico seleccionado.
+- El mensaje enviado se pinta inmediatamente con la fila devuelta por Supabase.
+- Estado visible del chat: Actualizando / Sincronizado / Error.
+- El estado de error permite tocar para reintentar.
+- Realtime actualiza solo el recurso afectado.
+- Polling de respaldo cada 4 segundos, sin superposición de consultas.
+
+
+## BodyCare rebrand — V14.5
+- Nombre visible de la aplicación: BodyCare.
+- Claim: Salud y progreso.
+- Nuevo logo BodyCare integrado en login, encabezado y reporte PDF.
+- PWA manifest actualizado a BodyCare.
+- Nuevos iconos 192x192, 512x512 y Apple Touch Icon derivados del logo aprobado.
+- Cache Service Worker renombrada a `bodycare-v14-5`, lo que limpia caches anteriores al activarse.
+- Notificaciones del backend Supabase migradas de PesoCare a BodyCare.
+- Se mantienen nombres técnicos internos y claves localStorage para conservar sesiones y compatibilidad.
+- No se renombra todavía el repositorio GitHub ni el proyecto Supabase.

@@ -1,5 +1,5 @@
-const CACHE='pesocare-v14-4';
-const CORE=['./','./index.html','./styles.css?v=14.4','./app.js?v=14.4','./manifest.webmanifest','./icon.svg','./brand-logo.png'];
+const CACHE='bodycare-v14-5';
+const CORE=['./','./index.html','./styles.css?v=14.5-bodycare','./app.js?v=14.5-bodycare','./manifest.webmanifest','./icon.svg','./brand-logo.png','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
 
 self.addEventListener('install',event=>{
   self.skipWaiting();

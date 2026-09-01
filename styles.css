@@ -448,3 +448,26 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
   .patient-subtab{min-height:44px;padding:7px 5px;font-size:.78rem}
   .patient-section-hero{align-items:flex-start;flex-direction:column}
 }
+
+/* V14.5 — sincronización de chat móvil */
+.chat-sync-status{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  min-height:30px;
+  margin:6px 0 4px;
+  color:#667085;
+  font-size:.74rem;
+  cursor:pointer;
+}
+.chat-sync-dot{
+  width:8px;height:8px;border-radius:50%;background:#f79009;flex:0 0 auto;
+}
+.chat-sync-status.syncing .chat-sync-dot{background:#f79009;animation:pulse-live 1.2s infinite}
+.chat-sync-status.ok .chat-sync-dot{background:#12b76a}
+.chat-sync-status.error{color:#b42318;font-weight:650}
+.chat-sync-status.error .chat-sync-dot{background:#d92d20}
+
+/* BodyCare brand build */
+.brand-image{object-fit:contain}
+.brand-image-small{background:#fff;border-radius:12px}
