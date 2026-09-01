@@ -336,3 +336,20 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
   .notification-panel{width:100%}
   .toast-container{top:max(12px,env(safe-area-inset-top));right:12px;width:calc(100vw - 24px)}
 }
+
+
+/* V14.1 — edición/eliminación de indicaciones y conversaciones */
+.form-actions,.prescription-actions,.conversation-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.prescription-list{margin-top:14px}
+.prescription-card{position:relative}
+.prescription-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.prescription-instructions{margin-top:7px;white-space:pre-wrap}
+.revision-chip,.edit-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;font-size:.72rem;font-weight:750;background:#eff8ff;color:#175cd3;white-space:nowrap}
+.edit-badge{background:#fffaeb;color:#93370d}
+.link-danger{border:0;background:transparent;color:#b42318;padding:5px 0;min-height:auto;font-size:.8rem;text-decoration:underline;text-underline-offset:2px}
+.link-danger:hover{background:transparent;color:#912018}
+.message-meta{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:4px}
+.message-meta span{margin-top:0!important}
+.message-delete{border:0;background:transparent;color:#b42318;min-height:auto;padding:0;font-size:.68rem;text-decoration:underline}
+.message-delete:hover{background:transparent;color:#912018}
+@media(max-width:700px){.prescription-card-head{flex-direction:column}.form-actions .primary,.form-actions .secondary{width:100%}.conversation-tools{justify-content:flex-start}}

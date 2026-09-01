@@ -16,6 +16,7 @@ let account=null, roles=[], activePortal='PATIENT';
 let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], supportTickets=[];
 let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
 let adminUsers=[], adminTickets=[], adminLoaded=false;
+let editingPrescriptionId=null;
 let notifications=[];
 let realtimeSocket=null, realtimeHeartbeat=null, realtimeReconnectTimer=null;
 let realtimeAttempts=0, realtimeRef=0, realtimeJoinRef=null, realtimeTopic=null;
@@ -162,6 +163,14 @@ async function dbUpdate(table,filter,obj){
 
 
 
+async function dbRpc(name,params={}){
+  return jsonFetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`,{
+    method:'POST',
+    headers:{...authHeaders(session.access_token),'Prefer':'return=representation'},
+    body:JSON.stringify(params)
+  });
+}
+
 async function invokeFunction(name,body){
   const res=await fetch(`${SUPABASE_URL}/functions/v1/${name}`,{
     method:'POST',
@@ -232,7 +241,11 @@ function unreadCount(){
 function notificationIcon(type){
   const icons={
     NEW_MESSAGE:'💬',
+    MESSAGE_DELETED:'🗑️',
+    CONVERSATION_CLEARED:'🧹',
     NEW_PRESCRIPTION:'📋',
+    PRESCRIPTION_UPDATED:'✏️',
+    PRESCRIPTION_REMOVED:'🗑️',
     NEW_WEIGHT:'⚖️',
     NEW_PATIENT:'👤',
     SUPPORT:'🛠️'
@@ -317,7 +330,11 @@ async function markAllNotificationsRead(){
 function notificationDestinationLabel(n){
   const map={
     NEW_MESSAGE:'Abrir conversación',
+    MESSAGE_DELETED:'Abrir conversación',
+    CONVERSATION_CLEARED:'Abrir conversación',
     NEW_PRESCRIPTION:'Ver indicación',
+    PRESCRIPTION_UPDATED:'Ver indicación',
+    PRESCRIPTION_REMOVED:'Abrir seguimiento',
     NEW_WEIGHT:'Abrir paciente',
     NEW_PATIENT:'Ver pacientes',
     SUPPORT:'Abrir soporte'
@@ -387,7 +404,7 @@ async function openNotificationById(id){
   await markNotificationRead(id);
   document.getElementById('notificationOverlay')?.remove();
 
-  if(n.type==='NEW_MESSAGE'){
+  if(['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'].includes(n.type)){
     if(hasRole('DOCTOR') && n.related_user_id && n.related_user_id!==currentUser.id){
       activePortal='DOCTOR';
       localStorage.setItem('pesocare_active_portal','DOCTOR');
@@ -404,7 +421,7 @@ async function openNotificationById(id){
     }
   }
 
-  if(n.type==='NEW_PRESCRIPTION' && hasRole('PATIENT')){
+  if(['NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'].includes(n.type) && hasRole('PATIENT')){
     activePortal='PATIENT';
     localStorage.setItem('pesocare_active_portal','PATIENT');
     await loadData();render();
@@ -570,19 +587,19 @@ async function handleRealtimeNotification(n,fromFallback=false){
   if(!fromFallback||!exists)showToast(n.title,n.body,n.type);
 
   try{
-    if(n.type==='NEW_MESSAGE'){
+    if(['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'].includes(n.type)){
       if(hasRole('PATIENT')&&n.related_user_id){
-        patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
+        patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
         renderPatientMessageThread();
       }
       if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id===n.related_user_id){
-        doctorPatientDetail.messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(n.related_user_id)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
+        doctorPatientDetail.messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(n.related_user_id)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
         renderDoctorMessageThread();
       }
     }
 
-    if(n.type==='NEW_PRESCRIPTION'&&hasRole('PATIENT')){
-      patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&order=created_at.desc`)||[];
+    if(['NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'].includes(n.type)&&hasRole('PATIENT')){
+      patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)||[];
       if(activePortal==='PATIENT'&&!userIsTyping())render();
     }
 
@@ -611,8 +628,10 @@ function renderDoctorMessageThread(){
   const messages=doctorPatientDetail.messages||[];
   el.innerHTML=messages.length?messages.map(m=>`
     <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}">
-      <div>${esc(m.message)}</div><span>${formatDateTime(m.created_at)}</span>
+      <div>${esc(m.message)}</div>
+      <div class="message-meta"><span>${formatDateTime(m.created_at)}</span>${m.sender_user_id===currentUser.id?`<button type="button" class="message-delete" data-delete-message="${m.id}" data-message-context="doctor">Eliminar</button>`:''}</div>
     </div>`).join(''):'<div class="empty-state">Aún no hay mensajes.</div>';
+  el.querySelectorAll('[data-delete-message]').forEach(btn=>btn.addEventListener('click',()=>deleteSentMessage(btn.dataset.deleteMessage,btn.dataset.messageContext)));
   el.scrollTop=el.scrollHeight;
 }
 
@@ -867,8 +886,8 @@ async function loadData(){
     if(careLinks.length){
       const ids=careLinks.map(l=>l.doctor_user_id).join(',');
       linkedDoctorProfiles=await dbGet(`doctor_profiles?select=*&user_id=in.(${ids})`)||[];
-      patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
-      patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&order=created_at.desc`)||[];
+      patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
+      patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)||[];
     }
     supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
   }
@@ -1093,7 +1112,7 @@ function dashboardView(){
             <div><strong>Frecuencia:</strong> ${esc(p.frequency_text)}</div>
             ${p.duration_text?`<div><strong>Duración:</strong> ${esc(p.duration_text)}</div>`:''}
             ${p.instructions?`<div class="muted">${esc(p.instructions)}</div>`:''}
-            <div class="small-muted">Integración legal pendiente</div>
+            <div class="small-muted">Versión ${p.revision||1} · integración legal pendiente</div>
           </div>`).join('')
         : '<div class="empty-state">No tienes indicaciones compartidas.</div>'}
     </section>
@@ -1108,7 +1127,8 @@ function dashboardView(){
         <form id="patientMessageForm" class="message-form">
           <textarea id="patientMessageText" rows="3" maxlength="4000" placeholder="Escribe un mensaje..." required></textarea>
           <button class="primary" type="submit">Enviar mensaje</button>
-        </form>`
+        </form>
+        <div class="conversation-tools"><button type="button" class="link-danger" id="patientClearConversation">Eliminar historial de conversación</button></div>`
       :'<div class="empty-state">Vincula un médico para habilitar mensajería.</div>'}
     </section>
 
@@ -1413,6 +1433,7 @@ function bindPatientCare(){
 
   document.getElementById('patientDoctorSelect')?.addEventListener('change',renderPatientMessageThread);
   document.getElementById('patientMessageForm')?.addEventListener('submit',sendPatientMessage);
+  document.getElementById('patientClearConversation')?.addEventListener('click',()=>{const doctorId=document.getElementById('patientDoctorSelect')?.value;if(doctorId)clearConversation(doctorId,currentUser.id,'patient')});
 
   document.getElementById('supportForm')?.addEventListener('submit',async e=>{
     e.preventDefault();
@@ -1435,12 +1456,14 @@ function renderPatientMessageThread(){
   const el=document.getElementById('patientMessageThread');
   if(!select||!el)return;
   const doctorId=select.value;
-  notifications.filter(n=>!n.read_at&&n.type==='NEW_MESSAGE'&&n.related_user_id===doctorId).forEach(n=>markNotificationRead(n.id));
+  notifications.filter(n=>!n.read_at&&['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'].includes(n.type)&&n.related_user_id===doctorId).forEach(n=>markNotificationRead(n.id));
   const messages=patientMessages.filter(m=>m.doctor_user_id===doctorId);
   el.innerHTML=messages.length?messages.map(m=>`
     <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}">
-      <div>${esc(m.message)}</div><span>${formatDateTime(m.created_at)}</span>
+      <div>${esc(m.message)}</div>
+      <div class="message-meta"><span>${formatDateTime(m.created_at)}</span>${m.sender_user_id===currentUser.id?`<button type="button" class="message-delete" data-delete-message="${m.id}" data-message-context="patient">Eliminar</button>`:''}</div>
     </div>`).join(''):'<div class="empty-state">Aún no hay mensajes.</div>';
+  el.querySelectorAll('[data-delete-message]').forEach(btn=>btn.addEventListener('click',()=>deleteSentMessage(btn.dataset.deleteMessage,btn.dataset.messageContext)));
   el.scrollTop=el.scrollHeight;
 }
 
@@ -1453,7 +1476,7 @@ async function sendPatientMessage(e){
   try{
     await dbInsert('care_messages',{doctor_user_id:doctorId,patient_user_id:currentUser.id,sender_user_id:currentUser.id,message});
     input.value='';
-    patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
+    patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
     renderPatientMessageThread();
   }catch(err){alert(err.message)}
 }
@@ -1560,8 +1583,8 @@ async function openDoctorPatient(patientId){
     const p=(await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(patientId)}&limit=1`))?.[0];
     if(!p)throw new Error('No se encontró la ficha del paciente.');
     const recs=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(patientId)}&order=measured_on.asc,created_at.asc`)||[];
-    const prescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
-    const messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
+    const prescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.desc`)||[];
+    const messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
     doctorPatientDetail={profile:p,records:recs,prescriptions,messages};
     const matching=notifications.filter(n=>!n.read_at&&n.type==='NEW_MESSAGE'&&n.related_user_id===patientId);
     for(const n of matching)markNotificationRead(n.id);
@@ -1573,6 +1596,7 @@ function doctorPatientDetailView(){
   const d=doctorPatientDetail;if(!d)return doctorView();
   const p=d.profile,recs=d.records,latest=recs.at(-1);
   const waist=[...recs].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined);
+  const editing=d.prescriptions.find(rx=>rx.id===editingPrescriptionId)||null;
   app.innerHTML=shell(`${header()}
     <section class="card">
       <button class="linkbtn" id="backPatients">← Mis pacientes</button>
@@ -1587,26 +1611,28 @@ function doctorPatientDetailView(){
     <section class="card"><h2 class="section-title">Evolución de peso</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'weight_kg',p.target_weight_kg?Number(p.target_weight_kg):null,'Peso (kg)','kg')}</div></section>
     <section class="card"><h2 class="section-title">Circunferencia abdominal</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'abdominal_circumference_cm',null,'Circunferencia (cm)','cm')}</div></section>
     <section class="card">
-      <h2 class="section-title">Indicación farmacológica</h2>
-      <div class="integration-note">La receta electrónica, firma y SNRE quedan pendientes. Esta versión permite crear y compartir la indicación dentro de PesoCare.</div>
+      <div class="card-head"><div><h2 class="section-title">Indicación farmacológica</h2><div class="muted">${editing?'Editando indicación existente':'Crear nueva indicación'}</div></div>${editing?'<span class="edit-badge">Modo edición</span>':''}</div>
+      <div class="integration-note">La receta electrónica, firma y SNRE quedan pendientes. Esta versión permite crear, modificar, retirar y compartir la indicación dentro de PesoCare.</div>
       <form id="doctorPrescriptionForm"><div class="grid">
-        <div><label>Medicamento</label><input id="rxMedication" required placeholder="Ej: Wegovy"></div>
-        <div><label>Principio activo</label><input id="rxIngredient" placeholder="Ej: semaglutida"></div>
-        <div><label>Dosis</label><input id="rxDose" required placeholder="Ej: 0,5 mg"></div>
-        <div><label>Frecuencia</label><input id="rxFrequency" required placeholder="Ej: 1 vez por semana"></div>
-        <div><label>Fecha inicio</label><input id="rxStart" type="date" value="${today()}"></div>
-        <div><label>Duración</label><input id="rxDuration" placeholder="Ej: 4 semanas"></div>
-      </div><label style="margin-top:10px">Indicaciones</label><textarea id="rxInstructions" rows="3"></textarea>
-      <button class="primary" type="submit" style="margin-top:12px">Guardar y compartir indicación</button></form>
-      ${d.prescriptions.length?`<div>${d.prescriptions.map(rx=>`
-        <div class="prescription-card"><strong>${esc(rx.medication_name)} · ${esc(rx.dose_text)}</strong>
-        <div>${esc(rx.frequency_text)}${rx.duration_text?` · ${esc(rx.duration_text)}`:''}</div>
-        <div class="small-muted">${rx.status} · receta legal pendiente</div></div>`).join('')}</div>`:''}
+        <div><label>Medicamento</label><input id="rxMedication" required placeholder="Ej: Wegovy" value="${esc(editing?.medication_name||'')}"></div>
+        <div><label>Principio activo</label><input id="rxIngredient" placeholder="Ej: semaglutida" value="${esc(editing?.active_ingredient||'')}"></div>
+        <div><label>Dosis</label><input id="rxDose" required placeholder="Ej: 0,5 mg" value="${esc(editing?.dose_text||'')}"></div>
+        <div><label>Frecuencia</label><input id="rxFrequency" required placeholder="Ej: 1 vez por semana" value="${esc(editing?.frequency_text||'')}"></div>
+        <div><label>Fecha inicio</label><input id="rxStart" type="date" value="${editing?.start_date||today()}"></div>
+        <div><label>Duración</label><input id="rxDuration" placeholder="Ej: 4 semanas" value="${esc(editing?.duration_text||'')}"></div>
+      </div><label style="margin-top:10px">Indicaciones</label><textarea id="rxInstructions" rows="3">${esc(editing?.instructions||'')}</textarea>
+      <div class="form-actions"><button class="primary" type="submit">${editing?'Guardar cambios':'Guardar y compartir indicación'}</button>${editing?'<button class="secondary" id="cancelPrescriptionEdit" type="button">Cancelar edición</button>':''}</div></form>
+      ${d.prescriptions.length?`<div class="prescription-list">${d.prescriptions.map(rx=>`
+        <div class="prescription-card">
+          <div class="prescription-card-head"><div><strong>${esc(rx.medication_name)} · ${esc(rx.dose_text)}</strong><div>${esc(rx.frequency_text)}${rx.duration_text?` · ${esc(rx.duration_text)}`:''}</div></div><span class="revision-chip">v${rx.revision||1}</span></div>
+          ${rx.instructions?`<div class="muted prescription-instructions">${esc(rx.instructions)}</div>`:''}
+          <div class="small-muted">${rx.status} · receta legal pendiente · actualizada ${formatDateTime(rx.updated_at)}</div>
+          <div class="prescription-actions"><button type="button" class="secondary small-btn" data-edit-prescription="${rx.id}">Editar</button><button type="button" class="danger-btn small-btn" data-delete-prescription="${rx.id}">Eliminar</button></div>
+        </div>`).join('')}</div>`:'<div class="empty-state">Todavía no hay indicaciones para este paciente.</div>'}
     </section>
     <section class="card">
-      <h2 class="section-title">Mensajes</h2>
-      <div class="message-thread" id="doctorMessageThread">${d.messages.length?d.messages.map(m=>`
-        <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}"><div>${esc(m.message)}</div><span>${formatDateTime(m.created_at)}</span></div>`).join(''):'<div class="empty-state">Aún no hay mensajes.</div>'}</div>
+      <div class="card-head"><div><h2 class="section-title">Mensajes</h2><div class="muted">Puedes eliminar tus mensajes enviados o limpiar todo el historial visible.</div></div><button type="button" class="link-danger" id="doctorClearConversation">Eliminar historial</button></div>
+      <div class="message-thread" id="doctorMessageThread"></div>
       <form id="doctorMessageForm" class="message-form"><textarea id="doctorMessageText" rows="3" maxlength="4000" required placeholder="Escribe al paciente..."></textarea><button class="primary" type="submit">Enviar mensaje</button></form>
     </section>
     <section class="card"><h2 class="section-title">Historial</h2>
@@ -1614,26 +1640,77 @@ function doctorPatientDetailView(){
       <tbody>${recs.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOfFor(r.measured_on,p)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table></div>
     </section>`);
   bindCommonHeader();
-  document.getElementById('backPatients')?.addEventListener('click',()=>{doctorPatientDetail=null;doctorView()});
+  renderDoctorMessageThread();
+  document.getElementById('backPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetail=null;doctorView()});
   document.getElementById('doctorPrescriptionForm')?.addEventListener('submit',saveDoctorPrescription);
+  document.getElementById('cancelPrescriptionEdit')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetailView()});
+  document.querySelectorAll('[data-edit-prescription]').forEach(btn=>btn.addEventListener('click',()=>{editingPrescriptionId=btn.dataset.editPrescription;doctorPatientDetailView();document.getElementById('doctorPrescriptionForm')?.scrollIntoView({behavior:'smooth',block:'start'})}));
+  document.querySelectorAll('[data-delete-prescription]').forEach(btn=>btn.addEventListener('click',()=>deleteDoctorPrescription(btn.dataset.deletePrescription)));
   document.getElementById('doctorMessageForm')?.addEventListener('submit',sendDoctorMessage);
+  document.getElementById('doctorClearConversation')?.addEventListener('click',()=>clearConversation(currentUser.id,p.user_id,'doctor'));
 }
 
 async function saveDoctorPrescription(e){
   e.preventDefault();const p=doctorPatientDetail.profile;
+  const payload={
+    medication_name:document.getElementById('rxMedication').value.trim(),
+    active_ingredient:document.getElementById('rxIngredient').value.trim()||null,
+    dose_text:document.getElementById('rxDose').value.trim(),
+    frequency_text:document.getElementById('rxFrequency').value.trim(),
+    start_date:document.getElementById('rxStart').value||null,
+    duration_text:document.getElementById('rxDuration').value.trim()||null,
+    instructions:document.getElementById('rxInstructions').value.trim()||null
+  };
   try{
-    await dbInsert('prescription_drafts',{
-      doctor_user_id:currentUser.id,patient_user_id:p.user_id,
-      medication_name:document.getElementById('rxMedication').value.trim(),
-      active_ingredient:document.getElementById('rxIngredient').value.trim()||null,
-      dose_text:document.getElementById('rxDose').value.trim(),
-      frequency_text:document.getElementById('rxFrequency').value.trim(),
-      start_date:document.getElementById('rxStart').value||null,
-      duration_text:document.getElementById('rxDuration').value.trim()||null,
-      instructions:document.getElementById('rxInstructions').value.trim()||null,
-      status:'SHARED',legal_status:'PENDING_LEGAL_INTEGRATION'
-    });
+    if(editingPrescriptionId){
+      await dbUpdate('prescription_drafts',`id=eq.${encodeURIComponent(editingPrescriptionId)}`,payload);
+      editingPrescriptionId=null;
+    }else{
+      await dbInsert('prescription_drafts',{
+        doctor_user_id:currentUser.id,patient_user_id:p.user_id,
+        ...payload,status:'SHARED',legal_status:'PENDING_LEGAL_INTEGRATION'
+      });
+    }
     await openDoctorPatient(p.user_id);
+  }catch(err){alert(err.message)}
+}
+
+async function deleteDoctorPrescription(id){
+  const rx=doctorPatientDetail?.prescriptions?.find(x=>x.id===id);if(!rx)return;
+  if(!confirm(`¿Eliminar la indicación de ${rx.medication_name}? El paciente dejará de verla. La acción quedará auditada.`))return;
+  try{
+    await dbRpc('delete_prescription_draft',{p_prescription_id:id});
+    if(editingPrescriptionId===id)editingPrescriptionId=null;
+    await openDoctorPatient(doctorPatientDetail.profile.user_id);
+  }catch(err){alert(err.message)}
+}
+
+async function deleteSentMessage(id,context){
+  if(!confirm('¿Eliminar este mensaje enviado? Desaparecerá de la conversación para ambos participantes.'))return;
+  try{
+    await dbRpc('delete_care_message',{p_message_id:id});
+    if(context==='patient'){
+      patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
+      renderPatientMessageThread();
+    }else if(doctorPatientDetail){
+      const patientId=doctorPatientDetail.profile.user_id;
+      doctorPatientDetail.messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
+      renderDoctorMessageThread();
+    }
+  }catch(err){alert(err.message)}
+}
+
+async function clearConversation(doctorId,patientId,context){
+  if(!confirm('Esta acción eliminará todo el historial visible de la conversación para médico y paciente. Los eventos quedarán auditados. ¿Continuar?'))return;
+  if(prompt('Escribe ELIMINAR para confirmar:')!=='ELIMINAR')return;
+  try{
+    await dbRpc('clear_care_conversation',{p_doctor_user_id:doctorId,p_patient_user_id:patientId});
+    if(context==='patient'){
+      patientMessages=[];renderPatientMessageThread();
+    }else if(doctorPatientDetail){
+      doctorPatientDetail.messages=[];renderDoctorMessageThread();
+    }
+    showToast('Conversación eliminada','El historial visible fue eliminado correctamente.','CONVERSATION_CLEARED');
   }catch(err){alert(err.message)}
 }
 
@@ -1850,7 +1927,7 @@ async function editPlan(){
 async function logout(){
   stopRealtime();
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];doctorProfile=null;doctorPatients=[];doctorPatientDetail=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];doctorProfile=null;doctorPatients=[];doctorPatientDetail=null;editingPrescriptionId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){

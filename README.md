@@ -106,3 +106,31 @@ https://lsueyras.github.io/pesocare/
 - PesoCare Admin con gestión de usuarios, roles, suspensión, reset, eliminación e invitaciones.
 - Tickets de soporte dentro de la app.
 - RNPI y receta electrónica legal quedan desacoplados y pendientes, sin bloquear operación.
+
+
+## V14 — Realtime y notificaciones
+- WebSocket directo a Supabase Realtime, sin librerías externas.
+- Campana con contador de notificaciones pendientes.
+- Estado de conexión `En vivo / Conectando / Sin conexión`.
+- Toast inmediato al recibir:
+  - nuevo mensaje;
+  - nueva indicación/prescripción compartida;
+  - nuevo registro de peso/circunferencia de un paciente;
+  - nuevo paciente vinculado;
+  - nuevo ticket de soporte.
+- Chat paciente ↔ médico se actualiza sin recargar.
+- Panel médico se refresca con nuevos registros del paciente.
+- Indicación compartida aparece automáticamente en el portal paciente.
+- Centro de notificaciones persistente con leído/no leído.
+- Fallback de sincronización cada 20 segundos si la conexión Realtime se interrumpe.
+- No se transmite texto clínico ni valores de peso dentro de la notificación Realtime: la app recupera los datos con RLS.
+- Push con la app completamente cerrada queda como fase posterior (Web Push/APNs/FCM).
+
+
+## V14.1 — Editar/eliminar indicaciones y conversaciones
+- Médico puede editar indicaciones compartidas; cada cambio incrementa revisión y notifica al paciente.
+- Médico puede retirar una indicación; desaparece de ambas vistas y queda auditada.
+- Cada usuario puede eliminar únicamente mensajes que él mismo envió.
+- Médico o paciente pueden eliminar el historial visible completo de una conversación con doble confirmación.
+- Eliminaciones son lógicas (soft delete), no borrado físico, para mantener trazabilidad administrativa.
+- Notificaciones Realtime actualizan automáticamente indicaciones y conversaciones modificadas/eliminadas.
