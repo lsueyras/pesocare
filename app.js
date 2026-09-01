@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='14.6';
+const APP_VERSION='14.7';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
@@ -44,6 +44,399 @@ const kg=n=>Number(n).toLocaleString('es-CL',{minimumFractionDigits:1,maximumFra
 const cm=n=>n===null||n===undefined||n===''?'—':Number(n).toLocaleString('es-CL',{minimumFractionDigits:2,maximumFractionDigits:2})+' cm';
 const weekOf=date=>profile?Math.max(0,Math.floor((parseDate(date)-parseDate(profile.start_date))/(7*86400000))):0;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+
+const RX_OTHER='__OTHER__';
+
+const WEIGHT_RX_CATALOG=[
+  {
+    id:'wegovy_sc',
+    group:'Inyectables',
+    label:'Wegovy® inyectable',
+    medication:'Wegovy',
+    aliases:['wegovy'],
+    ingredients:['Semaglutida'],
+    routes:['Subcutánea'],
+    regulatory:'Chile: registro ISP confirmado para presentaciones 0,25–2,4 mg. Confirmar siempre ficha profesional vigente.',
+    doses:['0,25 mg','0,5 mg','1 mg','1,7 mg','2,4 mg'],
+    frequencies:['1 vez por semana'],
+    durations:['4 semanas','8 semanas','12 semanas','16 semanas','3 meses','6 meses','12 meses','Mantención continua según respuesta/tolerancia'],
+    doseDefaults:{
+      '0,25 mg':{frequency:'1 vez por semana',duration:'4 semanas'},
+      '0,5 mg':{frequency:'1 vez por semana',duration:'4 semanas'},
+      '1 mg':{frequency:'1 vez por semana',duration:'4 semanas'},
+      '1,7 mg':{frequency:'1 vez por semana',duration:'4 semanas'},
+      '2,4 mg':{frequency:'1 vez por semana',duration:'Mantención continua según respuesta/tolerancia'}
+    }
+  },
+  {
+    id:'tirzepatide_sc',
+    group:'Inyectables',
+    label:'Mounjaro® / Zepbound® (tirzepatida)',
+    medication:'Tirzepatida (Mounjaro/Zepbound)',
+    aliases:['mounjaro','zepbound','tirzepatida','tirzepatide'],
+    ingredients:['Tirzepatida'],
+    routes:['Subcutánea'],
+    regulatory:'Chile: ISP registra presentaciones de Mounjaro/tirzepatida 2,5–15 mg. Confirmar indicación específica y ficha vigente del producto.',
+    doses:['2,5 mg','5 mg','7,5 mg','10 mg','12,5 mg','15 mg'],
+    frequencies:['1 vez por semana'],
+    durations:['4 semanas','8 semanas','12 semanas','16 semanas','3 meses','6 meses','12 meses','Mantención continua según respuesta/tolerancia'],
+    doseDefaults:{
+      '2,5 mg':{frequency:'1 vez por semana',duration:'4 semanas'},
+      '5 mg':{frequency:'1 vez por semana',duration:'4 semanas'},
+      '7,5 mg':{frequency:'1 vez por semana',duration:'4 semanas'},
+      '10 mg':{frequency:'1 vez por semana',duration:'4 semanas'},
+      '12,5 mg':{frequency:'1 vez por semana',duration:'4 semanas'},
+      '15 mg':{frequency:'1 vez por semana',duration:'Mantención continua según respuesta/tolerancia'}
+    }
+  },
+  {
+    id:'saxenda_sc',
+    group:'Inyectables',
+    label:'Saxenda®',
+    medication:'Saxenda',
+    aliases:['saxenda','liraglutida','liraglutide'],
+    ingredients:['Liraglutida'],
+    routes:['Subcutánea'],
+    regulatory:'Indicación antiobesidad establecida internacionalmente. Verificar registro y ficha ISP vigente antes de emitir receta.',
+    doses:['0,6 mg','1,2 mg','1,8 mg','2,4 mg','3 mg'],
+    frequencies:['1 vez al día'],
+    durations:['1 semana','2 semanas','4 semanas','8 semanas','12 semanas','16 semanas','3 meses','6 meses','12 meses','Mantención continua según respuesta/tolerancia'],
+    doseDefaults:{
+      '0,6 mg':{frequency:'1 vez al día',duration:'1 semana'},
+      '1,2 mg':{frequency:'1 vez al día',duration:'1 semana'},
+      '1,8 mg':{frequency:'1 vez al día',duration:'1 semana'},
+      '2,4 mg':{frequency:'1 vez al día',duration:'1 semana'},
+      '3 mg':{frequency:'1 vez al día',duration:'Mantención continua según respuesta/tolerancia'}
+    }
+  },
+  {
+    id:'wegovy_oral',
+    group:'Comprimidos',
+    label:'Wegovy® comprimidos (semaglutida oral)',
+    medication:'Wegovy comprimidos',
+    aliases:['wegovy comprimidos','wegovy oral','semaglutida oral'],
+    ingredients:['Semaglutida'],
+    routes:['Oral'],
+    regulatory:'FDA 2026 / recomendación EMA 2026. Disponibilidad y registro para obesidad en Chile: verificar antes de prescribir.',
+    doses:['1,5 mg','4 mg','9 mg','25 mg'],
+    frequencies:['1 vez al día, en ayunas'],
+    durations:['30 días','60 días','90 días','3 meses','6 meses','12 meses','Mantención continua según respuesta/tolerancia'],
+    doseDefaults:{
+      '1,5 mg':{frequency:'1 vez al día, en ayunas',duration:'30 días'},
+      '4 mg':{frequency:'1 vez al día, en ayunas',duration:'30 días'},
+      '9 mg':{frequency:'1 vez al día, en ayunas',duration:'30 días'},
+      '25 mg':{frequency:'1 vez al día, en ayunas',duration:'Mantención continua según respuesta/tolerancia'}
+    }
+  },
+  {
+    id:'naltrexone_bupropion',
+    group:'Comprimidos',
+    label:'Naltrexona / Bupropión LP (Mysimba® / Contrave®)',
+    medication:'Naltrexona/Bupropión LP',
+    aliases:['mysimba','contrave','naltrexona/bupropión','naltrexona bupropion','naltrexone bupropion'],
+    ingredients:['Naltrexona + Bupropión'],
+    routes:['Oral'],
+    regulatory:'Indicación antiobesidad FDA/EMA. Verificar registro, contraindicaciones y ficha ISP vigente en Chile.',
+    doses:[
+      '1 comprimido AM (8/90 mg)',
+      '1 comprimido AM + 1 PM (16/180 mg/día)',
+      '2 comprimidos AM + 1 PM (24/270 mg/día)',
+      '2 comprimidos AM + 2 PM (32/360 mg/día)'
+    ],
+    frequencies:['1 vez al día (mañana)','2 veces al día (mañana y tarde)'],
+    durations:['1 semana','4 semanas','8 semanas','12 semanas','16 semanas','3 meses','6 meses','12 meses','Mantención continua según respuesta/tolerancia'],
+    doseDefaults:{
+      '1 comprimido AM (8/90 mg)':{frequency:'1 vez al día (mañana)',duration:'1 semana'},
+      '1 comprimido AM + 1 PM (16/180 mg/día)':{frequency:'2 veces al día (mañana y tarde)',duration:'1 semana'},
+      '2 comprimidos AM + 1 PM (24/270 mg/día)':{frequency:'2 veces al día (mañana y tarde)',duration:'1 semana'},
+      '2 comprimidos AM + 2 PM (32/360 mg/día)':{frequency:'2 veces al día (mañana y tarde)',duration:'Mantención continua según respuesta/tolerancia'}
+    }
+  },
+  {
+    id:'orlistat',
+    group:'Comprimidos',
+    label:'Orlistat (Xenical® / genérico)',
+    medication:'Orlistat',
+    aliases:['orlistat','xenical','alli'],
+    ingredients:['Orlistat'],
+    routes:['Oral'],
+    regulatory:'Indicación antiobesidad establecida internacionalmente. Verificar presentación y ficha ISP vigente.',
+    doses:['60 mg','120 mg'],
+    frequencies:['Con cada comida principal que contenga grasa, hasta 3 veces al día'],
+    durations:['4 semanas','8 semanas','12 semanas','16 semanas','3 meses','6 meses','12 meses','Mantención continua según respuesta/tolerancia'],
+    doseDefaults:{
+      '60 mg':{frequency:'Con cada comida principal que contenga grasa, hasta 3 veces al día',duration:'12 semanas'},
+      '120 mg':{frequency:'Con cada comida principal que contenga grasa, hasta 3 veces al día',duration:'12 semanas'}
+    }
+  },
+  {
+    id:'phentermine_topiramate',
+    group:'Comprimidos',
+    label:'Fentermina / Topiramato LP (Qsymia®)',
+    medication:'Fentermina/Topiramato LP',
+    aliases:['qsymia','fentermina/topiramato','phentermine/topiramate'],
+    ingredients:['Fentermina + Topiramato'],
+    routes:['Oral'],
+    regulatory:'Aprobado para control de peso en EE.UU.; contiene fármaco controlado. Verificar estrictamente disponibilidad, registro y regulación chilena.',
+    doses:['3,75/23 mg','7,5/46 mg','11,25/69 mg','15/92 mg'],
+    frequencies:['1 vez al día, por la mañana'],
+    durations:['14 días','4 semanas','8 semanas','12 semanas','3 meses','6 meses','12 meses','Mantención continua según respuesta/tolerancia'],
+    doseDefaults:{
+      '3,75/23 mg':{frequency:'1 vez al día, por la mañana',duration:'14 días'},
+      '7,5/46 mg':{frequency:'1 vez al día, por la mañana',duration:'12 semanas'},
+      '11,25/69 mg':{frequency:'1 vez al día, por la mañana',duration:'14 días'},
+      '15/92 mg':{frequency:'1 vez al día, por la mañana',duration:'12 semanas'}
+    }
+  },
+  {
+    id:'setmelanotide',
+    group:'Uso especializado',
+    label:'Setmelanotida (Imcivree®) — obesidad genética específica',
+    medication:'Setmelanotida (Imcivree)',
+    aliases:['setmelanotida','setmelanotide','imcivree'],
+    ingredients:['Setmelanotida'],
+    routes:['Subcutánea'],
+    regulatory:'Uso reservado a indicaciones genéticas específicas de obesidad. Requiere evaluación especializada y ficha técnica vigente.',
+    doses:['Dosis individualizada según edad, indicación genética y ficha técnica'],
+    frequencies:['1 vez al día'],
+    durations:['Mantención continua según respuesta/tolerancia'],
+    doseDefaults:{
+      'Dosis individualizada según edad, indicación genética y ficha técnica':{frequency:'1 vez al día',duration:'Mantención continua según respuesta/tolerancia'}
+    }
+  }
+];
+
+const RX_STANDARD_DURATIONS=[
+  '1 semana','2 semanas','14 días','4 semanas','8 semanas','12 semanas','16 semanas',
+  '30 días','60 días','90 días','3 meses','6 meses','12 meses',
+  'Mantención continua según respuesta/tolerancia'
+];
+
+function normalizeRxText(value){
+  return String(value||'').trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[®™]/g,'');
+}
+
+function findRxCatalogEntry(medication,ingredient=''){
+  const med=normalizeRxText(medication);
+  const ing=normalizeRxText(ingredient);
+  return WEIGHT_RX_CATALOG.find(item=>{
+    if(normalizeRxText(item.medication)===med)return true;
+    if(item.aliases.some(a=>med.includes(normalizeRxText(a))||normalizeRxText(a).includes(med)))return true;
+    return !!ing && item.ingredients.some(i=>normalizeRxText(i)===ing);
+  })||null;
+}
+
+function optionMarkup(value,label,selected){
+  return `<option value="${esc(value)}" ${String(value)===String(selected)?'selected':''}>${esc(label??value)}</option>`;
+}
+
+function rxCatalogMedicationOptions(selectedEntryId=''){
+  const groups=[...new Set(WEIGHT_RX_CATALOG.map(x=>x.group))];
+  return `<option value="">Selecciona medicamento…</option>`+
+    groups.map(group=>`<optgroup label="${esc(group)}">${
+      WEIGHT_RX_CATALOG.filter(x=>x.group===group).map(x=>optionMarkup(x.id,x.label,x.id===selectedEntryId)).join('')
+    }</optgroup>`).join('')+
+    `<option value="${RX_OTHER}" ${selectedEntryId===RX_OTHER?'selected':''}>Otro medicamento / esquema personalizado…</option>`;
+}
+
+function rxFieldOptions(values,current,placeholder='Selecciona…'){
+  const unique=[...new Set((values||[]).filter(Boolean))];
+  const known=unique.includes(current);
+  return `<option value="">${esc(placeholder)}</option>`+
+    unique.map(v=>optionMarkup(v,v,v===current)).join('')+
+    `<option value="${RX_OTHER}" ${current&&!known?'selected':''}>Otra opción…</option>`;
+}
+
+function rxResolvedValue(selectId,otherId){
+  const sel=document.getElementById(selectId);
+  if(!sel)return '';
+  if(sel.value===RX_OTHER)return document.getElementById(otherId)?.value.trim()||'';
+  return sel.value.trim();
+}
+
+function rxManualField(id,label,value=''){
+  return `<div class="rx-manual-field" id="${id}Wrap">
+    <label for="${id}">${esc(label)}</label>
+    <input id="${id}" value="${esc(value)}">
+  </div>`;
+}
+
+function prescriptionFormMarkup(editing){
+  const entry=editing?findRxCatalogEntry(editing.medication_name,editing.active_ingredient):null;
+  const entryId=editing?(entry?.id||RX_OTHER):'';
+
+  const currentMedication=editing?.medication_name||'';
+  const currentIngredient=editing?.active_ingredient||'';
+  const currentRoute=editing?.route_text||'';
+  const currentDose=editing?.dose_text||'';
+  const currentFrequency=editing?.frequency_text||'';
+  const currentDuration=editing?.duration_text||'';
+
+  const ingredients=entry?.ingredients||[];
+  const routes=entry?.routes||[];
+  const doses=entry?.doses||[];
+  const frequencies=entry?.frequencies||[];
+  const durations=entry?.durations||RX_STANDARD_DURATIONS;
+
+  return `<form id="doctorPrescriptionForm">
+    <div class="rx-catalog-note">
+      <strong>Catálogo clínico BodyCare</strong>
+      <span>Opciones de apoyo basadas en tratamientos antiobesidad con indicación regulatoria. El profesional debe confirmar registro, ficha técnica, contraindicaciones e indicación vigente en Chile antes de prescribir.</span>
+    </div>
+
+    <div class="grid rx-grid">
+      <div>
+        <label>Medicamento</label>
+        <select id="rxMedicationSelect" required>${rxCatalogMedicationOptions(entryId)}</select>
+        ${rxManualField('rxMedicationOther','Otro medicamento',entryId===RX_OTHER?currentMedication:'')}
+      </div>
+
+      <div>
+        <label>Principio activo</label>
+        <select id="rxIngredientSelect" required>${rxFieldOptions(ingredients,currentIngredient,'Selecciona principio activo…')}</select>
+        ${rxManualField('rxIngredientOther','Otro principio activo',currentIngredient&&!ingredients.includes(currentIngredient)?currentIngredient:'')}
+      </div>
+
+      <div>
+        <label>Vía / presentación</label>
+        <select id="rxRouteSelect">${rxFieldOptions(routes,currentRoute,'Selecciona vía…')}</select>
+        ${rxManualField('rxRouteOther','Otra vía / presentación',currentRoute&&!routes.includes(currentRoute)?currentRoute:'')}
+      </div>
+
+      <div>
+        <label>Dosis</label>
+        <select id="rxDoseSelect" required>${rxFieldOptions(doses,currentDose,'Selecciona dosis…')}</select>
+        ${rxManualField('rxDoseOther','Otra dosis',currentDose&&!doses.includes(currentDose)?currentDose:'')}
+      </div>
+
+      <div>
+        <label>Frecuencia</label>
+        <select id="rxFrequencySelect" required>${rxFieldOptions(frequencies,currentFrequency,'Selecciona frecuencia…')}</select>
+        ${rxManualField('rxFrequencyOther','Otra frecuencia',currentFrequency&&!frequencies.includes(currentFrequency)?currentFrequency:'')}
+      </div>
+
+      <div>
+        <label>Fecha inicio</label>
+        <input id="rxStart" type="date" value="${editing?.start_date||today()}">
+      </div>
+
+      <div>
+        <label>Duración</label>
+        <select id="rxDurationSelect">${rxFieldOptions(durations,currentDuration,'Selecciona duración…')}</select>
+        ${rxManualField('rxDurationOther','Otra duración',currentDuration&&!durations.includes(currentDuration)?currentDuration:'')}
+      </div>
+    </div>
+
+    <div id="rxRegulatoryNote" class="rx-regulatory-note">${entry?esc(entry.regulatory):'Selecciona un medicamento para ver información regulatoria de referencia.'}</div>
+
+    <label style="margin-top:10px">Indicaciones adicionales</label>
+    <textarea id="rxInstructions" rows="3">${esc(editing?.instructions||'')}</textarea>
+
+    <div class="form-actions">
+      <button class="primary" type="submit">${editing?'Guardar cambios':'Guardar y compartir indicación'}</button>
+      ${editing?'<button class="secondary" id="cancelPrescriptionEdit" type="button">Cancelar edición</button>':''}
+    </div>
+  </form>`;
+}
+
+function toggleRxOther(selectId,otherId){
+  const sel=document.getElementById(selectId);
+  const wrap=document.getElementById(otherId+'Wrap');
+  if(!sel||!wrap)return;
+  wrap.classList.toggle('show',sel.value===RX_OTHER);
+}
+
+function populateRxField(selectId,otherId,values,current='',placeholder='Selecciona…'){
+  const sel=document.getElementById(selectId);
+  const other=document.getElementById(otherId);
+  if(!sel)return;
+  sel.innerHTML=rxFieldOptions(values,current,placeholder);
+  if(current && !(values||[]).includes(current)){
+    sel.value=RX_OTHER;
+    if(other)other.value=current;
+  }
+  toggleRxOther(selectId,otherId);
+}
+
+function bindPrescriptionCatalog(editing){
+  const medicationSelect=document.getElementById('rxMedicationSelect');
+  if(!medicationSelect)return;
+
+  const refreshFromMedication=(preserve=false)=>{
+    const entry=WEIGHT_RX_CATALOG.find(x=>x.id===medicationSelect.value)||null;
+    const old={
+      ingredient:preserve?rxResolvedValue('rxIngredientSelect','rxIngredientOther'):'',
+      route:preserve?rxResolvedValue('rxRouteSelect','rxRouteOther'):'',
+      dose:preserve?rxResolvedValue('rxDoseSelect','rxDoseOther'):'',
+      frequency:preserve?rxResolvedValue('rxFrequencySelect','rxFrequencyOther'):'',
+      duration:preserve?rxResolvedValue('rxDurationSelect','rxDurationOther'):''
+    };
+
+    if(entry){
+      populateRxField('rxIngredientSelect','rxIngredientOther',entry.ingredients,entry.ingredients.includes(old.ingredient)?old.ingredient:entry.ingredients[0],'Selecciona principio activo…');
+      populateRxField('rxRouteSelect','rxRouteOther',entry.routes,entry.routes.includes(old.route)?old.route:entry.routes[0],'Selecciona vía…');
+      populateRxField('rxDoseSelect','rxDoseOther',entry.doses,entry.doses.includes(old.dose)?old.dose:'','Selecciona dosis…');
+      populateRxField('rxFrequencySelect','rxFrequencyOther',entry.frequencies,entry.frequencies.includes(old.frequency)?old.frequency:entry.frequencies[0],'Selecciona frecuencia…');
+      populateRxField('rxDurationSelect','rxDurationOther',entry.durations,entry.durations.includes(old.duration)?old.duration:'','Selecciona duración…');
+      document.getElementById('rxRegulatoryNote').textContent=entry.regulatory;
+    }else{
+      populateRxField('rxIngredientSelect','rxIngredientOther',[],old.ingredient,'Selecciona principio activo…');
+      populateRxField('rxRouteSelect','rxRouteOther',[],old.route,'Selecciona vía…');
+      populateRxField('rxDoseSelect','rxDoseOther',[],old.dose,'Selecciona dosis…');
+      populateRxField('rxFrequencySelect','rxFrequencyOther',[],old.frequency,'Selecciona frecuencia…');
+      populateRxField('rxDurationSelect','rxDurationOther',RX_STANDARD_DURATIONS,old.duration,'Selecciona duración…');
+      document.getElementById('rxRegulatoryNote').textContent='Esquema personalizado: confirmar registro, indicación, dosis y ficha técnica vigente antes de prescribir.';
+    }
+    toggleRxOther('rxMedicationSelect','rxMedicationOther');
+  };
+
+  medicationSelect.addEventListener('change',()=>{
+    refreshFromMedication(false);
+    if(medicationSelect.value===RX_OTHER){
+      document.getElementById('rxMedicationOther')?.focus();
+    }
+  });
+
+  [
+    ['rxIngredientSelect','rxIngredientOther'],
+    ['rxRouteSelect','rxRouteOther'],
+    ['rxDoseSelect','rxDoseOther'],
+    ['rxFrequencySelect','rxFrequencyOther'],
+    ['rxDurationSelect','rxDurationOther']
+  ].forEach(([s,o])=>{
+    document.getElementById(s)?.addEventListener('change',()=>{
+      toggleRxOther(s,o);
+      if(document.getElementById(s)?.value===RX_OTHER)document.getElementById(o)?.focus();
+    });
+  });
+
+  document.getElementById('rxDoseSelect')?.addEventListener('change',()=>{
+    const entry=WEIGHT_RX_CATALOG.find(x=>x.id===medicationSelect.value);
+    const dose=document.getElementById('rxDoseSelect').value;
+    const defaults=entry?.doseDefaults?.[dose];
+    if(!defaults)return;
+
+    const freq=document.getElementById('rxFrequencySelect');
+    if(freq && [...freq.options].some(o=>o.value===defaults.frequency))freq.value=defaults.frequency;
+
+    const dur=document.getElementById('rxDurationSelect');
+    if(dur && [...dur.options].some(o=>o.value===defaults.duration))dur.value=defaults.duration;
+  });
+
+  if(editing){
+    toggleRxOther('rxMedicationSelect','rxMedicationOther');
+    [
+      ['rxIngredientSelect','rxIngredientOther'],
+      ['rxRouteSelect','rxRouteOther'],
+      ['rxDoseSelect','rxDoseOther'],
+      ['rxFrequencySelect','rxFrequencyOther'],
+      ['rxDurationSelect','rxDurationOther']
+    ].forEach(([s,o])=>toggleRxOther(s,o));
+  }
+}
 
 function shell(content){
   return `<main class="shell">${content}<div class="footer">BodyCare · Salud y progreso · v${APP_VERSION}</div></main>`;
@@ -1568,7 +1961,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.6'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.7'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -1614,6 +2007,8 @@ function patientPrescriptionListMarkup(){
       <div class="prescription-card">
         <div class="prescription-title">${esc(p.medication_name)}</div>
         <div><strong>Dosis:</strong> ${esc(p.dose_text)}</div>
+        ${p.active_ingredient?`<div><strong>Principio activo:</strong> ${esc(p.active_ingredient)}</div>`:''}
+        ${p.route_text?`<div><strong>Vía:</strong> ${esc(p.route_text)}</div>`:''}
         <div><strong>Frecuencia:</strong> ${esc(p.frequency_text)}</div>
         ${p.duration_text?`<div><strong>Duración:</strong> ${esc(p.duration_text)}</div>`:''}
         ${p.instructions?`<div class="muted">${esc(p.instructions)}</div>`:''}
@@ -1997,6 +2392,7 @@ function doctorPrescriptionListMarkup(){
   return rows.length?`<div class="prescription-list">${rows.map(rx=>`
     <div class="prescription-card">
       <div class="prescription-card-head"><div><strong>${esc(rx.medication_name)} · ${esc(rx.dose_text)}</strong><div>${esc(rx.frequency_text)}${rx.duration_text?` · ${esc(rx.duration_text)}`:''}</div></div><span class="revision-chip">v${rx.revision||1}</span></div>
+      <div class="rx-summary-line">${rx.active_ingredient?`<span>${esc(rx.active_ingredient)}</span>`:''}${rx.route_text?`<span>${esc(rx.route_text)}</span>`:''}</div>
       ${rx.instructions?`<div class="muted prescription-instructions">${esc(rx.instructions)}</div>`:''}
       <div class="small-muted">${rx.status} · receta legal pendiente · actualizada ${formatDateTime(rx.updated_at)}</div>
       <div class="prescription-actions"><button type="button" class="secondary small-btn" data-edit-prescription="${rx.id}">Editar</button><button type="button" class="danger-btn small-btn" data-delete-prescription="${rx.id}">Eliminar</button></div>
@@ -2036,15 +2432,7 @@ function doctorPatientDetailView(){
     <section class="card">
       <div class="card-head"><div><h2 class="section-title">Indicación farmacológica</h2><div class="muted">${editing?'Editando indicación existente':'Crear nueva indicación'}</div></div>${editing?'<span class="edit-badge">Modo edición</span>':''}</div>
       <div class="integration-note">La receta electrónica, firma y SNRE quedan pendientes. Esta versión permite crear, modificar, retirar y compartir la indicación dentro de BodyCare.</div>
-      <form id="doctorPrescriptionForm"><div class="grid">
-        <div><label>Medicamento</label><input id="rxMedication" required placeholder="Ej: Wegovy" value="${esc(editing?.medication_name||'')}"></div>
-        <div><label>Principio activo</label><input id="rxIngredient" placeholder="Ej: semaglutida" value="${esc(editing?.active_ingredient||'')}"></div>
-        <div><label>Dosis</label><input id="rxDose" required placeholder="Ej: 0,5 mg" value="${esc(editing?.dose_text||'')}"></div>
-        <div><label>Frecuencia</label><input id="rxFrequency" required placeholder="Ej: 1 vez por semana" value="${esc(editing?.frequency_text||'')}"></div>
-        <div><label>Fecha inicio</label><input id="rxStart" type="date" value="${editing?.start_date||today()}"></div>
-        <div><label>Duración</label><input id="rxDuration" placeholder="Ej: 4 semanas" value="${esc(editing?.duration_text||'')}"></div>
-      </div><label style="margin-top:10px">Indicaciones</label><textarea id="rxInstructions" rows="3">${esc(editing?.instructions||'')}</textarea>
-      <div class="form-actions"><button class="primary" type="submit">${editing?'Guardar cambios':'Guardar y compartir indicación'}</button>${editing?'<button class="secondary" id="cancelPrescriptionEdit" type="button">Cancelar edición</button>':''}</div></form>
+${prescriptionFormMarkup(editing)}
       <div id="doctorPrescriptionList">${doctorPrescriptionListMarkup()}</div>
     </section>
     <section class="card">
@@ -2062,6 +2450,7 @@ function doctorPatientDetailView(){
   renderDoctorPrescriptionList();
   document.getElementById('backPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetail=null;doctorView()});
   document.getElementById('doctorPrescriptionForm')?.addEventListener('submit',saveDoctorPrescription);
+  bindPrescriptionCatalog(editing);
   document.getElementById('cancelPrescriptionEdit')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetailView()});
   document.getElementById('doctorMessageForm')?.addEventListener('submit',sendDoctorMessage);
   document.getElementById('doctorChatSyncStatus')?.addEventListener('click',()=>syncDoctorMessages(p.user_id));
@@ -2069,24 +2458,41 @@ function doctorPatientDetailView(){
 }
 
 async function saveDoctorPrescription(e){
-  e.preventDefault();const p=doctorPatientDetail.profile;
+  e.preventDefault();
+  const p=doctorPatientDetail.profile;
+
+  const medicationSelect=document.getElementById('rxMedicationSelect');
+  const selectedEntry=WEIGHT_RX_CATALOG.find(x=>x.id===medicationSelect?.value)||null;
+
   const payload={
-    medication_name:document.getElementById('rxMedication').value.trim(),
-    active_ingredient:document.getElementById('rxIngredient').value.trim()||null,
-    dose_text:document.getElementById('rxDose').value.trim(),
-    frequency_text:document.getElementById('rxFrequency').value.trim(),
+    medication_name:medicationSelect?.value===RX_OTHER
+      ? document.getElementById('rxMedicationOther')?.value.trim()
+      : selectedEntry?.medication||'',
+    active_ingredient:rxResolvedValue('rxIngredientSelect','rxIngredientOther')||null,
+    route_text:rxResolvedValue('rxRouteSelect','rxRouteOther')||null,
+    dose_text:rxResolvedValue('rxDoseSelect','rxDoseOther'),
+    frequency_text:rxResolvedValue('rxFrequencySelect','rxFrequencyOther'),
     start_date:document.getElementById('rxStart').value||null,
-    duration_text:document.getElementById('rxDuration').value.trim()||null,
+    duration_text:rxResolvedValue('rxDurationSelect','rxDurationOther')||null,
     instructions:document.getElementById('rxInstructions').value.trim()||null
   };
+
+  if(!payload.medication_name||!payload.active_ingredient||!payload.dose_text||!payload.frequency_text){
+    alert('Completa medicamento, principio activo, dosis y frecuencia antes de guardar.');
+    return;
+  }
+
   try{
     if(editingPrescriptionId){
       await dbUpdate('prescription_drafts',`id=eq.${encodeURIComponent(editingPrescriptionId)}`,payload);
       editingPrescriptionId=null;
     }else{
       await dbInsert('prescription_drafts',{
-        doctor_user_id:currentUser.id,patient_user_id:p.user_id,
-        ...payload,status:'SHARED',legal_status:'PENDING_LEGAL_INTEGRATION'
+        doctor_user_id:currentUser.id,
+        patient_user_id:p.user_id,
+        ...payload,
+        status:'SHARED',
+        legal_status:'PENDING_LEGAL_INTEGRATION'
       });
     }
     await openDoctorPatient(p.user_id);

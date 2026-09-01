@@ -208,3 +208,27 @@ https://lsueyras.github.io/pesocare/
 - Polling de respaldo de conversación cada 3 s.
 - Sincronización de notificaciones de respaldo cada 8 s.
 - Compatible con iPhone Safari/PWA y escritorio.
+
+
+## BodyCare V14.7 — Catálogo farmacológico guiado
+- Prescripción médica con listas desplegables para:
+  - medicamento;
+  - principio activo;
+  - vía/presentación;
+  - dosis;
+  - frecuencia;
+  - duración.
+- El catálogo base cubre tratamientos con indicación antiobesidad establecida:
+  - Wegovy inyectable (semaglutida);
+  - tirzepatida / Mounjaro-Zepbound;
+  - Saxenda (liraglutida);
+  - Wegovy oral;
+  - naltrexona/bupropión;
+  - orlistat;
+  - fentermina/topiramato LP;
+  - setmelanotida para obesidad genética específica.
+- Cada campo permite `Otra opción` manual.
+- Las dosis sugieren automáticamente frecuencia y duración de etapa cuando existe un esquema estándar.
+- Se agrega vía de administración a `route_text` existente, sin cambio de esquema de BD.
+- Se muestra advertencia regulatoria por medicamento.
+- No se agregan automáticamente medicamentos usados solo off-label para pérdida de peso.

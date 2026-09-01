@@ -479,3 +479,44 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
 .pending-message .message-meta{
   font-style:italic;
 }
+
+/* BodyCare V14.7 — catálogo farmacológico */
+.rx-catalog-note{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  margin:10px 0 14px;
+  padding:11px 12px;
+  border:1px solid #b2ddff;
+  border-radius:12px;
+  background:#eff8ff;
+}
+.rx-catalog-note strong{color:#175cd3}
+.rx-catalog-note span{color:#475467;font-size:.8rem;line-height:1.35}
+.rx-grid{align-items:start}
+.rx-manual-field{display:none;margin-top:8px}
+.rx-manual-field.show{display:block}
+.rx-regulatory-note{
+  margin-top:10px;
+  padding:9px 11px;
+  background:#fffaeb;
+  border:1px solid #fedf89;
+  border-radius:10px;
+  color:#93370d;
+  font-size:.78rem;
+  line-height:1.35;
+}
+.rx-summary-line{
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+  margin-top:5px;
+}
+.rx-summary-line span{
+  display:inline-block;
+  padding:3px 7px;
+  background:#f2f4f7;
+  border-radius:999px;
+  color:#475467;
+  font-size:.72rem;
+}
