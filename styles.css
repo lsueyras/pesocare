@@ -543,3 +543,148 @@ input[data-date-cl].date-invalid{
   border-color:#d92d20 !important;
   box-shadow:0 0 0 3px rgba(217,45,32,.10);
 }
+
+/* BodyCare V14.11 — calendario propio con formato chileno */
+.date-cl-control{
+  position:relative;
+  width:100%;
+}
+.date-cl-control input[data-date-cl]{
+  width:100%;
+  padding-right:46px !important;
+}
+.date-cl-button{
+  position:absolute;
+  right:6px;
+  top:50%;
+  transform:translateY(-50%);
+  width:34px;
+  height:34px;
+  display:grid;
+  place-items:center;
+  border:0;
+  background:transparent;
+  color:#175cd3;
+  border-radius:8px;
+  cursor:pointer;
+  padding:0;
+}
+.date-cl-button:hover{background:#eff8ff}
+.date-cl-button svg{
+  width:20px;
+  height:20px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
+.date-picker-overlay{
+  position:fixed;
+  inset:0;
+  z-index:10000;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:18px;
+  background:rgba(16,24,40,.42);
+  backdrop-filter:blur(2px);
+}
+.date-picker-overlay.open{display:flex}
+
+.date-picker-dialog{
+  width:min(360px,100%);
+  background:#fff;
+  border-radius:18px;
+  box-shadow:0 24px 80px rgba(16,24,40,.28);
+  padding:16px;
+}
+.date-picker-head{
+  display:grid;
+  grid-template-columns:44px 1fr 44px;
+  align-items:center;
+  gap:6px;
+  margin-bottom:12px;
+}
+.date-picker-title{
+  text-align:center;
+  font-weight:800;
+  color:#101828;
+  text-transform:none;
+}
+.date-picker-nav{
+  width:40px;
+  height:40px;
+  border:1px solid #e4e7ec;
+  border-radius:10px;
+  background:#fff;
+  color:#344054;
+  font-size:26px;
+  line-height:1;
+  cursor:pointer;
+}
+.date-picker-nav:hover{background:#f9fafb}
+
+.date-picker-weekdays,
+.date-picker-grid{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:4px;
+}
+.date-picker-weekdays{
+  margin-bottom:5px;
+  color:#667085;
+  font-size:.72rem;
+  font-weight:700;
+  text-align:center;
+}
+.date-picker-weekdays span{padding:5px 0}
+
+.date-picker-day,
+.date-picker-empty{
+  aspect-ratio:1/1;
+}
+.date-picker-day{
+  border:0;
+  border-radius:10px;
+  background:transparent;
+  color:#344054;
+  font-weight:650;
+  cursor:pointer;
+}
+.date-picker-day:hover{background:#eff8ff;color:#175cd3}
+.date-picker-day.today{
+  box-shadow:inset 0 0 0 1px #84adff;
+  color:#175cd3;
+}
+.date-picker-day.selected{
+  background:#175cd3;
+  color:#fff;
+  box-shadow:none;
+}
+.date-picker-actions{
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+  margin-top:14px;
+  padding-top:12px;
+  border-top:1px solid #eaecf0;
+}
+
+@media(max-width:600px){
+  .date-picker-overlay{
+    align-items:flex-end;
+    padding:0;
+  }
+  .date-picker-dialog{
+    width:100%;
+    max-width:none;
+    border-radius:20px 20px 0 0;
+    padding:18px 18px calc(18px + env(safe-area-inset-bottom));
+  }
+  .date-picker-day{
+    min-height:42px;
+    font-size:.95rem;
+  }
+}

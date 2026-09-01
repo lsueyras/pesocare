@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='14.10';
+const APP_VERSION='14.11';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
@@ -70,8 +70,10 @@ function normalizeDateCLInput(el){
 
 function bindDateCLInputs(root=document){
   root.querySelectorAll('[data-date-cl]').forEach(el=>{
+    enhanceDateCLControl(el);
     if(el.dataset.dateBound==='1')return;
     el.dataset.dateBound='1';
+
     el.addEventListener('blur',()=>normalizeDateCLInput(el));
     el.addEventListener('input',()=>{
       el.classList.remove('date-invalid');
@@ -95,6 +97,163 @@ function requireDateCL(id,label,allowEmpty=false){
   }
   el.classList.remove('date-invalid');
   return iso;
+}
+
+
+let datePickerTarget=null;
+let datePickerMonth=null;
+
+function calendarButtonSvg(){
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M7 2v3M17 2v3M3.5 9h17M5 4.5h14a2 2 0 0 1 2 2V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2Z"/>
+  </svg>`;
+}
+
+function ensureDatePicker(){
+  let overlay=document.getElementById('bodycareDatePicker');
+  if(overlay)return overlay;
+
+  overlay=document.createElement('div');
+  overlay.id='bodycareDatePicker';
+  overlay.className='date-picker-overlay';
+  overlay.setAttribute('aria-hidden','true');
+  overlay.innerHTML=`
+    <div class="date-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="datePickerTitle">
+      <div class="date-picker-head">
+        <button type="button" class="date-picker-nav" id="datePickerPrev" aria-label="Mes anterior">‹</button>
+        <div class="date-picker-title" id="datePickerTitle"></div>
+        <button type="button" class="date-picker-nav" id="datePickerNext" aria-label="Mes siguiente">›</button>
+      </div>
+      <div class="date-picker-weekdays">
+        <span>Lu</span><span>Ma</span><span>Mi</span><span>Ju</span><span>Vi</span><span>Sá</span><span>Do</span>
+      </div>
+      <div class="date-picker-grid" id="datePickerGrid"></div>
+      <div class="date-picker-actions">
+        <button type="button" class="secondary small-btn" id="datePickerToday">Hoy</button>
+        <button type="button" class="secondary small-btn" id="datePickerClose">Cerrar</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click',e=>{
+    if(e.target===overlay)closeDatePicker();
+  });
+  document.getElementById('datePickerPrev').addEventListener('click',()=>{
+    datePickerMonth=new Date(Date.UTC(datePickerMonth.getUTCFullYear(),datePickerMonth.getUTCMonth()-1,1));
+    renderDatePicker();
+  });
+  document.getElementById('datePickerNext').addEventListener('click',()=>{
+    datePickerMonth=new Date(Date.UTC(datePickerMonth.getUTCFullYear(),datePickerMonth.getUTCMonth()+1,1));
+    renderDatePicker();
+  });
+  document.getElementById('datePickerToday').addEventListener('click',()=>{
+    if(!datePickerTarget)return;
+    const iso=today();
+    datePickerTarget.value=formatDateCL(iso);
+    datePickerTarget.classList.remove('date-invalid');
+    datePickerTarget.dispatchEvent(new Event('change',{bubbles:true}));
+    closeDatePicker();
+  });
+  document.getElementById('datePickerClose').addEventListener('click',closeDatePicker);
+
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&overlay.classList.contains('open'))closeDatePicker();
+  });
+
+  return overlay;
+}
+
+function openDatePicker(input){
+  if(!input)return;
+  datePickerTarget=input;
+
+  const current=parseDateCL(input.value);
+  const base=current?parseDate(current):new Date();
+  datePickerMonth=new Date(Date.UTC(base.getUTCFullYear?base.getUTCFullYear():base.getFullYear(), base.getUTCMonth?base.getUTCMonth():base.getMonth(), 1));
+
+  const overlay=ensureDatePicker();
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden','false');
+  renderDatePicker();
+}
+
+function closeDatePicker(){
+  const overlay=document.getElementById('bodycareDatePicker');
+  if(overlay){
+    overlay.classList.remove('open');
+    overlay.setAttribute('aria-hidden','true');
+  }
+  datePickerTarget=null;
+}
+
+function renderDatePicker(){
+  if(!datePickerMonth)return;
+
+  const year=datePickerMonth.getUTCFullYear();
+  const month=datePickerMonth.getUTCMonth();
+  const title=document.getElementById('datePickerTitle');
+  const grid=document.getElementById('datePickerGrid');
+  if(!title||!grid)return;
+
+  title.textContent=new Intl.DateTimeFormat('es-CL',{month:'long',year:'numeric',timeZone:'UTC'})
+    .format(new Date(Date.UTC(year,month,1)))
+    .replace(/^./,c=>c.toUpperCase());
+
+  const first=new Date(Date.UTC(year,month,1));
+  const lastDay=new Date(Date.UTC(year,month+1,0)).getUTCDate();
+  const mondayIndex=(first.getUTCDay()+6)%7; // Monday = 0
+  const selectedIso=datePickerTarget?parseDateCL(datePickerTarget.value):null;
+  const todayIso=today();
+
+  let html='';
+  for(let i=0;i<mondayIndex;i++)html+='<span class="date-picker-empty"></span>';
+
+  for(let day=1;day<=lastDay;day++){
+    const iso=`${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const classes=[
+      'date-picker-day',
+      iso===selectedIso?'selected':'',
+      iso===todayIso?'today':''
+    ].filter(Boolean).join(' ');
+    html+=`<button type="button" class="${classes}" data-date-iso="${iso}" aria-label="${formatDateCL(iso)}">${day}</button>`;
+  }
+
+  grid.innerHTML=html;
+  grid.querySelectorAll('[data-date-iso]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      if(!datePickerTarget)return;
+      datePickerTarget.value=formatDateCL(btn.dataset.dateIso);
+      datePickerTarget.classList.remove('date-invalid');
+      datePickerTarget.dispatchEvent(new Event('change',{bubbles:true}));
+      closeDatePicker();
+    });
+  });
+}
+
+function enhanceDateCLControl(input){
+  if(!input||input.dataset.calendarEnhanced==='1')return;
+  input.dataset.calendarEnhanced='1';
+
+  const parent=input.parentElement;
+  let wrap;
+
+  if(parent?.classList.contains('date-cl-control')){
+    wrap=parent;
+  }else{
+    wrap=document.createElement('div');
+    wrap.className='date-cl-control';
+    input.parentNode.insertBefore(wrap,input);
+    wrap.appendChild(input);
+  }
+
+  const button=document.createElement('button');
+  button.type='button';
+  button.className='date-cl-button';
+  button.setAttribute('aria-label','Abrir calendario');
+  button.innerHTML=calendarButtonSvg();
+  button.addEventListener('click',()=>openDatePicker(input));
+  wrap.appendChild(button);
 }
 
 const parseDecimal=value=>{
@@ -2037,7 +2196,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.10'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.11'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();

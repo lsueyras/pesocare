@@ -258,3 +258,14 @@ https://lsueyras.github.io/pesocare/
 - Validación de fechas reales.
 - Ingreso numérico con `/` automático.
 - Idioma de documento: es-CL.
+
+
+## BodyCare V14.11 — Calendario con formato chileno
+- Se mantiene DD/MM/AAAA en todos los campos visibles.
+- Cada campo de fecha incorpora un botón de calendario.
+- Selector de fecha propio de BodyCare, independiente del locale de Safari/Chrome.
+- Navegación por mes anterior/siguiente.
+- Botón Hoy.
+- Selección de fecha actualiza el campo en DD/MM/AAAA.
+- En iPhone se presenta como panel inferior para mejor experiencia táctil.
+- Se mantiene almacenamiento interno ISO YYYY-MM-DD.
