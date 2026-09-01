@@ -144,3 +144,14 @@ https://lsueyras.github.io/pesocare/
 - Se muestra `v14.2` en el pie de la aplicación para validar qué versión está ejecutando cada dispositivo.
 - Acciones Editar/Eliminar y Eliminar historial forzadas visibles en escritorio y móvil.
 - Mensajes de error de las RPC traducidos a respuestas más claras.
+
+
+## V14.3 — Consistencia de datos paciente/médico
+- Supabase RLS impide leer mensajes e indicaciones con `deleted_at`.
+- Incluso clientes antiguos ya no pueden recuperar historial eliminado.
+- Todas las lecturas REST usan `cache: no-store`.
+- Eliminar/limpiar conversación actualiza estado local y luego reconcilia contra Supabase.
+- Enviar un nuevo mensaje recupera únicamente la conversación activa.
+- Prescripciones retiradas desaparecen del paciente inmediatamente sin hacer un `render()` completo.
+- Eventos Realtime actualizan directamente los componentes de mensaje/prescripción.
+- Filtros defensivos de `deleted_at` tanto en backend como frontend.

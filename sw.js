@@ -1,5 +1,5 @@
-const CACHE='pesocare-v14-2';
-const CORE=['./','./index.html','./styles.css?v=14.2','./app.js?v=14.2','./manifest.webmanifest','./icon.svg','./brand-logo.png'];
+const CACHE='pesocare-v14-3';
+const CORE=['./','./index.html','./styles.css?v=14.3','./app.js?v=14.3','./manifest.webmanifest','./icon.svg','./brand-logo.png'];
 
 self.addEventListener('install',event=>{
   self.skipWaiting();

@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='14.2';
+const APP_VERSION='14.3';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
 const SIGNUP_COOLDOWN_KEY='pesocare_signup_cooldown_until';
@@ -145,7 +145,14 @@ async function ensureSession(){
 }
 
 async function dbGet(path){
-  return jsonFetch(`${SUPABASE_URL}/rest/v1/${path}`,{headers:{...authHeaders(session.access_token),'Accept':'application/json'}});
+  return jsonFetch(`${SUPABASE_URL}/rest/v1/${path}`,{
+    cache:'no-store',
+    headers:{
+      ...authHeaders(session.access_token),
+      'Accept':'application/json',
+      'Cache-Control':'no-cache'
+    }
+  });
 }
 async function dbInsert(table,obj){
   return jsonFetch(`${SUPABASE_URL}/rest/v1/${table}`,{
@@ -603,18 +610,36 @@ async function handleRealtimeNotification(n,fromFallback=false){
   try{
     if(['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'].includes(n.type)){
       if(hasRole('PATIENT')&&n.related_user_id){
-        patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
-        renderPatientMessageThread();
+        if(n.type==='MESSAGE_DELETED'&&n.entity_id){
+          patientMessages=patientMessages.filter(m=>m.id!==n.entity_id);
+          renderPatientMessageThread();
+        }
+        if(n.type==='CONVERSATION_CLEARED'){
+          patientMessages=patientMessages.filter(m=>m.doctor_user_id!==n.related_user_id);
+          renderPatientMessageThread();
+        }
+        await syncPatientConversation(n.related_user_id);
       }
+
       if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id===n.related_user_id){
-        doctorPatientDetail.messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(n.related_user_id)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
-        renderDoctorMessageThread();
+        if(n.type==='MESSAGE_DELETED'&&n.entity_id){
+          doctorPatientDetail.messages=(doctorPatientDetail.messages||[]).filter(m=>m.id!==n.entity_id);
+          renderDoctorMessageThread();
+        }
+        if(n.type==='CONVERSATION_CLEARED'){
+          doctorPatientDetail.messages=[];
+          renderDoctorMessageThread();
+        }
+        await syncDoctorConversation(n.related_user_id);
       }
     }
 
     if(['NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'].includes(n.type)&&hasRole('PATIENT')){
-      patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)||[];
-      if(activePortal==='PATIENT'&&!userIsTyping())render();
+      if(n.type==='PRESCRIPTION_REMOVED'&&n.entity_id){
+        patientPrescriptions=patientPrescriptions.filter(p=>p.id!==n.entity_id);
+        renderPatientPrescriptionList();
+      }
+      await syncPatientPrescriptions();
     }
 
     if(n.type==='NEW_WEIGHT'&&hasRole('DOCTOR')){
@@ -633,13 +658,15 @@ async function handleRealtimeNotification(n,fromFallback=false){
       adminLoaded=false;
       if(activePortal==='ADMIN'&&!userIsTyping())render();
     }
-  }catch(err){console.warn('Realtime refresh failed',err)}
+  }catch(err){
+    console.warn('Realtime refresh failed',err);
+  }
 }
 
 function renderDoctorMessageThread(){
   const el=document.getElementById('doctorMessageThread');
   if(!el||!doctorPatientDetail)return;
-  const messages=doctorPatientDetail.messages||[];
+  const messages=(doctorPatientDetail.messages||[]).filter(m=>!m.deleted_at);
   el.innerHTML=messages.length?messages.map(m=>`
     <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}">
       <div>${esc(m.message)}</div>
@@ -900,8 +927,8 @@ async function loadData(){
     if(careLinks.length){
       const ids=careLinks.map(l=>l.doctor_user_id).join(',');
       linkedDoctorProfiles=await dbGet(`doctor_profiles?select=*&user_id=in.(${ids})`)||[];
-      patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
-      patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)||[];
+      patientMessages=(await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[]).filter(m=>!m.deleted_at);
+      patientPrescriptions=(await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)||[]).filter(p=>!p.deleted_at);
     }
     supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
   }
@@ -1118,17 +1145,7 @@ function dashboardView(){
     <section class="card">
       <h2 class="section-title">Indicaciones compartidas</h2>
       <div class="integration-note">La receta electrónica, firma y conexión SNRE quedan pendientes. Las indicaciones compartidas funcionan dentro de PesoCare, pero todavía no sustituyen una receta oficial.</div>
-      ${patientPrescriptions.length
-        ? patientPrescriptions.map(p=>`
-          <div class="prescription-card">
-            <div class="prescription-title">${esc(p.medication_name)}</div>
-            <div><strong>Dosis:</strong> ${esc(p.dose_text)}</div>
-            <div><strong>Frecuencia:</strong> ${esc(p.frequency_text)}</div>
-            ${p.duration_text?`<div><strong>Duración:</strong> ${esc(p.duration_text)}</div>`:''}
-            ${p.instructions?`<div class="muted">${esc(p.instructions)}</div>`:''}
-            <div class="small-muted">Versión ${p.revision||1} · integración legal pendiente</div>
-          </div>`).join('')
-        : '<div class="empty-state">No tienes indicaciones compartidas.</div>'}
+      <div id="patientPrescriptionList">${patientPrescriptionListMarkup()}</div>
     </section>
 
     <section class="card">
@@ -1457,12 +1474,55 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'v14.2'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'v14.3'}
       });
       msg.className='notice success';msg.textContent='Ticket enviado a PesoCare Admin.';
       supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
     }catch(err){msg.textContent=err.message}
   });
+}
+
+
+function patientPrescriptionListMarkup(){
+  const active=(patientPrescriptions||[]).filter(p=>!p.deleted_at&&p.status==='SHARED');
+  return active.length
+    ? active.map(p=>`
+      <div class="prescription-card">
+        <div class="prescription-title">${esc(p.medication_name)}</div>
+        <div><strong>Dosis:</strong> ${esc(p.dose_text)}</div>
+        <div><strong>Frecuencia:</strong> ${esc(p.frequency_text)}</div>
+        ${p.duration_text?`<div><strong>Duración:</strong> ${esc(p.duration_text)}</div>`:''}
+        ${p.instructions?`<div class="muted">${esc(p.instructions)}</div>`:''}
+        <div class="small-muted">Versión ${p.revision||1} · integración legal pendiente</div>
+      </div>`).join('')
+    : '<div class="empty-state">No tienes indicaciones compartidas.</div>';
+}
+
+function renderPatientPrescriptionList(){
+  const el=document.getElementById('patientPrescriptionList');
+  if(el)el.innerHTML=patientPrescriptionListMarkup();
+}
+
+async function syncPatientPrescriptions(){
+  if(!hasRole('PATIENT'))return;
+  patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)||[];
+  renderPatientPrescriptionList();
+}
+
+async function syncPatientConversation(doctorId=null){
+  if(!hasRole('PATIENT'))return;
+  patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
+  patientMessages=patientMessages.filter(m=>!m.deleted_at);
+  renderPatientMessageThread();
+}
+
+async function syncDoctorConversation(patientId){
+  if(!hasRole('DOCTOR')||!patientId)return;
+  const rows=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
+  if(doctorPatientDetail?.profile?.user_id===patientId){
+    doctorPatientDetail.messages=rows.filter(m=>!m.deleted_at);
+    renderDoctorMessageThread();
+  }
 }
 
 function renderPatientMessageThread(){
@@ -1471,7 +1531,7 @@ function renderPatientMessageThread(){
   if(!select||!el)return;
   const doctorId=select.value;
   notifications.filter(n=>!n.read_at&&['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'].includes(n.type)&&n.related_user_id===doctorId).forEach(n=>markNotificationRead(n.id));
-  const messages=patientMessages.filter(m=>m.doctor_user_id===doctorId);
+  const messages=patientMessages.filter(m=>m.doctor_user_id===doctorId&&!m.deleted_at);
   el.innerHTML=messages.length?messages.map(m=>`
     <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}">
       <div>${esc(m.message)}</div>
@@ -1490,8 +1550,7 @@ async function sendPatientMessage(e){
   try{
     await dbInsert('care_messages',{doctor_user_id:doctorId,patient_user_id:currentUser.id,sender_user_id:currentUser.id,message});
     input.value='';
-    patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
-    renderPatientMessageThread();
+    await syncPatientConversation(doctorId);
   }catch(err){alert(err.message)}
 }
 
@@ -1597,8 +1656,8 @@ async function openDoctorPatient(patientId){
     const p=(await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(patientId)}&limit=1`))?.[0];
     if(!p)throw new Error('No se encontró la ficha del paciente.');
     const recs=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(patientId)}&order=measured_on.asc,created_at.asc`)||[];
-    const prescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.desc`)||[];
-    const messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
+    const prescriptions=(await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.desc`)||[]).filter(p=>!p.deleted_at);
+    const messages=(await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[]).filter(m=>!m.deleted_at);
     doctorPatientDetail={profile:p,records:recs,prescriptions,messages};
     const matching=notifications.filter(n=>!n.read_at&&n.type==='NEW_MESSAGE'&&n.related_user_id===patientId);
     for(const n of matching)markNotificationRead(n.id);
@@ -1695,6 +1754,8 @@ async function deleteDoctorPrescription(id){
   try{
     await dbRpc('delete_prescription_draft',{p_prescription_id:id});
     if(editingPrescriptionId===id)editingPrescriptionId=null;
+    doctorPatientDetail.prescriptions=(doctorPatientDetail.prescriptions||[]).filter(p=>p.id!==id);
+    doctorPatientDetailView();
     await openDoctorPatient(doctorPatientDetail.profile.user_id);
   }catch(err){alert(err.message)}
 }
@@ -1704,12 +1765,14 @@ async function deleteSentMessage(id,context){
   try{
     await dbRpc('delete_care_message',{p_message_id:id});
     if(context==='patient'){
-      patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
+      patientMessages=patientMessages.filter(m=>m.id!==id);
       renderPatientMessageThread();
+      await syncPatientConversation();
     }else if(doctorPatientDetail){
       const patientId=doctorPatientDetail.profile.user_id;
-      doctorPatientDetail.messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&deleted_at=is.null&order=created_at.asc`)||[];
+      doctorPatientDetail.messages=(doctorPatientDetail.messages||[]).filter(m=>m.id!==id);
       renderDoctorMessageThread();
+      await syncDoctorConversation(patientId);
     }
   }catch(err){alert(err.message)}
 }
@@ -1720,9 +1783,13 @@ async function clearConversation(doctorId,patientId,context){
   try{
     await dbRpc('clear_care_conversation',{p_doctor_user_id:doctorId,p_patient_user_id:patientId});
     if(context==='patient'){
-      patientMessages=[];renderPatientMessageThread();
+      patientMessages=patientMessages.filter(m=>m.doctor_user_id!==doctorId);
+      renderPatientMessageThread();
+      await syncPatientConversation(doctorId);
     }else if(doctorPatientDetail){
-      doctorPatientDetail.messages=[];renderDoctorMessageThread();
+      doctorPatientDetail.messages=[];
+      renderDoctorMessageThread();
+      await syncDoctorConversation(patientId);
     }
     showToast('Conversación eliminada','El historial visible fue eliminado correctamente.','CONVERSATION_CLEARED');
   }catch(err){alert(err.message)}
@@ -1733,7 +1800,8 @@ async function sendDoctorMessage(e){
   const message=document.getElementById('doctorMessageText').value.trim();if(!message)return;
   try{
     await dbInsert('care_messages',{doctor_user_id:currentUser.id,patient_user_id:p.user_id,sender_user_id:currentUser.id,message});
-    await openDoctorPatient(p.user_id);
+    document.getElementById('doctorMessageText').value='';
+    await syncDoctorConversation(p.user_id);
   }catch(err){alert(err.message)}
 }
 

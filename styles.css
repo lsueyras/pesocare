@@ -378,3 +378,6 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
   visibility:visible !important;
 }
 .footer{font-variant-numeric:tabular-nums}
+
+/* V14.3 — consistencia de sincronización */
+#patientPrescriptionList{display:block}
