@@ -241,3 +241,11 @@ https://lsueyras.github.io/pesocare/
 - El paciente se actualiza por Realtime y por sincronización de respaldo.
 - Editar/cancelar refresca solo el formulario de prescripción.
 - Eliminar refresca solo la lista de prescripciones.
+
+
+## BodyCare V14.9 — Eliminación optimista de indicaciones
+- La indicación desaparece inmediatamente del portal médico al confirmar eliminación.
+- Supabase confirma la eliminación en segundo plano.
+- El paciente continúa recibiendo la eliminación por Realtime.
+- Si el backend rechaza la operación, BodyCare restaura automáticamente la indicación.
+- La reconciliación posterior actualiza solo prescripciones y nunca toca mensajes.

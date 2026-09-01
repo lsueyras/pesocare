@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='14.8';
+const APP_VERSION='14.9';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
@@ -1963,7 +1963,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.8'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v14.9'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -2593,25 +2593,48 @@ async function saveDoctorPrescription(e){
 async function deleteDoctorPrescription(id){
   const rx=doctorPatientDetail?.prescriptions?.find(x=>x.id===id);
   if(!rx)return;
+
   if(!confirm(`¿Eliminar la indicación de ${rx.medication_name}? El paciente dejará de verla. La acción quedará auditada.`))return;
 
+  const previousPrescriptions=[...(doctorPatientDetail.prescriptions||[])];
+  const wasEditing=editingPrescriptionId===id;
+
+  // Optimistic UI: remove immediately before waiting for Supabase.
+  doctorPatientDetail.prescriptions=previousPrescriptions.filter(p=>p.id!==id);
+
+  if(wasEditing){
+    editingPrescriptionId=null;
+    renderDoctorPrescriptionForm();
+  }
+
+  renderDoctorPrescriptionList();
+  setPrescriptionSyncStatus('doctor','syncing','Retirando indicación…');
+
   try{
-    setPrescriptionSyncStatus('doctor','syncing','Retirando indicación…');
     await dbRpc('delete_prescription_draft',{p_prescription_id:id});
 
-    doctorPatientDetail.prescriptions=(doctorPatientDetail.prescriptions||[]).filter(p=>p.id!==id);
+    setPrescriptionSyncStatus('doctor','ok','Indicación retirada');
+    showToast(
+      'Indicación retirada',
+      'La indicación fue eliminada y el paciente dejará de verla automáticamente.',
+      'PRESCRIPTION_REMOVED'
+    );
 
-    if(editingPrescriptionId===id){
-      editingPrescriptionId=null;
+    // Reconcile only prescription data after the UI has already updated.
+    syncDoctorPrescriptions(doctorPatientDetail.profile.user_id).catch(err=>{
+      console.warn('Prescription reconcile after delete',err);
+    });
+  }catch(err){
+    // Restore UI if backend deletion failed.
+    doctorPatientDetail.prescriptions=previousPrescriptions;
+
+    if(wasEditing){
+      editingPrescriptionId=id;
       renderDoctorPrescriptionForm();
     }
 
     renderDoctorPrescriptionList();
-    setPrescriptionSyncStatus('doctor','ok','Indicación retirada');
-    showToast('Indicación retirada','El paciente dejará de verla automáticamente.','PRESCRIPTION_REMOVED');
-    await syncDoctorPrescriptions(doctorPatientDetail.profile.user_id);
-  }catch(err){
-    setPrescriptionSyncStatus('doctor','error','No se pudo retirar la indicación. Toca aquí para reintentar.');
+    setPrescriptionSyncStatus('doctor','error','No se pudo retirar la indicación. Se restauró en pantalla.');
     alert(err.message);
   }
 }

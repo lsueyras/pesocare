@@ -528,3 +528,8 @@ textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,9
 .rx-sync-status.ok .rx-sync-dot{background:#12b76a}
 .rx-sync-status.error{color:#b42318;font-weight:650}
 .rx-sync-status.error .rx-sync-dot{background:#d92d20}
+
+/* BodyCare V14.9 — eliminación optimista de indicaciones */
+#doctorPrescriptionList .prescription-card{
+  transition:opacity .18s ease, transform .18s ease;
+}
