@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='15.4';
+const APP_VERSION='15.5';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -877,6 +877,7 @@ async function dbRpc(name,params={}){
       /message not found/i.test(raw)?'No se encontró el mensaje. Es posible que ya haya sido eliminado.':
       /control not found/i.test(raw)?'No se encontró el control. Es posible que ya haya sido modificado.':
       /Control already scheduled for this date and time/i.test(raw)?'Ya existe un control agendado con este médico para esa fecha y hora.':
+      /SLOT_UNAVAILABLE/i.test(raw)?raw:
       /not authorized/i.test(raw)?'Tu sesión no tiene autorización para realizar esta acción.':
       Number(err?.status)===401?'Tu sesión venció y no pudo renovarse automáticamente. Vuelve a iniciar sesión.':
       raw;
@@ -2228,7 +2229,7 @@ function patientDoctorView(){
           <div class="doctor-row">
             <div>
               <strong>${esc(d.display_name||'Médico')}</strong>
-              <div class="muted">${esc(d.specialty||'Especialidad pendiente')}${d.clinic_name?` · ${esc(d.clinic_name)}`:''}</div>
+              <div class="muted">${esc(d.specialty||'Especialidad pendiente')}${d.clinic_name?` · ${esc(d.clinic_name)}`:''} · controles ${validControlSlotMinutes(d.control_slot_minutes||30)} min</div>
               <div class="integration-note">Validación RNPI: ${d.verification_status==='VERIFIED'?'verificada':'integración pendiente'}</div>
             </div>
             <button type="button" class="secondary small-btn" data-revoke-doctor="${d.user_id}">Desvincular</button>
@@ -2266,8 +2267,10 @@ function patientDoctorView(){
               <div class="time-control-frame">
                 <input id="patientControlTime" type="time" required>
               </div>
+              <div id="patientControlSlotInfo" class="slot-info">Bloques definidos por el médico: ${validControlSlotMinutes(linkedDoctorProfiles.find(d=>d.user_id===selectedControlDoctor)?.control_slot_minutes||30)} minutos.</div>
             </div>
           </div>
+          <div id="patientControlAvailability" class="control-availability"></div>
           <label for="patientControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>
           <textarea id="patientControlNotes" rows="2" maxlength="1000" placeholder="Ej: control de evolución"></textarea>
           <div class="form-actions"><button class="primary" type="submit">Registrar control</button></div>
@@ -2597,6 +2600,174 @@ function doctorNameById(userId){
 function linkForDoctor(userId){return careLinks.find(l=>l.doctor_user_id===userId)}
 
 
+
+function validControlSlotMinutes(value){
+  const n=Number(value);
+  return [15,30,45,60].includes(n)?n:30;
+}
+
+function linkedDoctorSlotMinutes(doctorId){
+  return validControlSlotMinutes(linkedDoctorProfiles.find(d=>d.user_id===doctorId)?.control_slot_minutes||30);
+}
+
+function controlSlotMinutesForContext(context){
+  if(context==='doctor')return validControlSlotMinutes(doctorProfile?.control_slot_minutes||30);
+  return linkedDoctorSlotMinutes(selectedPatientControlDoctorId());
+}
+
+function controlContextIds(context){
+  if(context==='doctor'){
+    return {
+      doctorId:currentUser.id,
+      patientId:doctorPatientDetail?.profile?.user_id||null
+    };
+  }
+  return {
+    doctorId:selectedPatientControlDoctorId(),
+    patientId:currentUser.id
+  };
+}
+
+function controlInputIds(context){
+  return context==='doctor'
+    ? {date:'doctorControlDate',time:'doctorControlTime',availability:'doctorControlAvailability',slotInfo:'doctorControlSlotInfo'}
+    : {date:'patientControlDate',time:'patientControlTime',availability:'patientControlAvailability',slotInfo:'patientControlSlotInfo'};
+}
+
+function formatSuggestedControl(dateIso,timeValue){
+  return `${formatDateCL(dateIso)} · ${String(timeValue||'').slice(0,5)}`;
+}
+
+function applyControlSlotStep(context){
+  const ids=controlInputIds(context);
+  const input=document.getElementById(ids.time);
+  const info=document.getElementById(ids.slotInfo);
+  const mins=controlSlotMinutesForContext(context);
+  if(input)input.step=String(mins*60);
+  if(info)info.textContent=`Bloques definidos por el médico: ${mins} minutos.`;
+}
+
+function clearControlAvailability(context){
+  const el=document.getElementById(controlInputIds(context).availability);
+  if(el){
+    el.innerHTML='';
+    el.className='control-availability';
+  }
+}
+
+function renderControlAvailability(context,result,requestedTime=''){
+  const ids=controlInputIds(context);
+  const el=document.getElementById(ids.availability);
+  if(!el)return;
+
+  if(!result){
+    clearControlAvailability(context);
+    return;
+  }
+
+  const mins=validControlSlotMinutes(result.slot_minutes||controlSlotMinutesForContext(context));
+
+  if(result.available){
+    el.className='control-availability available';
+    el.innerHTML=`<span class="availability-dot"></span><span>Horario disponible · bloque de ${mins} min</span>`;
+    return;
+  }
+
+  const suggestionDate=result.suggested_date;
+  const suggestionTime=result.suggested_time;
+  const reason=result.reason==='NOT_ALIGNED'
+    ? `La agenda de este médico utiliza bloques de ${mins} minutos y ${esc(requestedTime||'esa hora')} no corresponde al inicio de un bloque.`
+    : `Ese horario no está disponible en la agenda del médico.`;
+
+  el.className='control-availability unavailable';
+  el.innerHTML=`
+    <div>
+      <strong>Horario no disponible</strong>
+      <span>${reason}</span>
+      ${suggestionDate&&suggestionTime?`<span>Horario disponible más cercano: <strong>${esc(formatSuggestedControl(suggestionDate,suggestionTime))}</strong></span>`:''}
+    </div>
+    ${suggestionDate&&suggestionTime?`<button type="button" class="secondary small-btn" data-use-control-slot="${context}" data-slot-date="${esc(suggestionDate)}" data-slot-time="${esc(suggestionTime)}">Usar este horario</button>`:''}
+  `;
+
+  el.querySelector('[data-use-control-slot]')?.addEventListener('click',e=>{
+    const btn=e.currentTarget;
+    const dateInput=document.getElementById(ids.date);
+    const timeInput=document.getElementById(ids.time);
+    if(dateInput)dateInput.value=formatDateCL(btn.dataset.slotDate);
+    if(timeInput)timeInput.value=btn.dataset.slotTime;
+    checkControlAvailability(context,false);
+  });
+}
+
+async function checkControlAvailability(context,showStatus=true){
+  const ids=controlInputIds(context);
+  const relation=controlContextIds(context);
+  const dateEl=document.getElementById(ids.date);
+  const timeEl=document.getElementById(ids.time);
+
+  if(!relation.doctorId||!relation.patientId||!dateEl?.value||!timeEl?.value){
+    clearControlAvailability(context);
+    return null;
+  }
+
+  let controlDate;
+  try{
+    controlDate=requireDateCL(ids.date,'Fecha del control');
+  }catch{
+    clearControlAvailability(context);
+    return null;
+  }
+
+  if(showStatus)setControlSyncStatus(context,'syncing','Verificando disponibilidad…');
+
+  try{
+    const result=await dbRpc('bodycare_check_control_slot',{
+      p_doctor_user_id:relation.doctorId,
+      p_patient_user_id:relation.patientId,
+      p_control_date:controlDate,
+      p_control_time:timeEl.value
+    });
+    renderControlAvailability(context,result,timeEl.value);
+    if(showStatus){
+      setControlSyncStatus(
+        context,
+        result?.available?'ok':'',
+        result?.available?'Horario disponible':'Selecciona una alternativa disponible'
+      );
+    }
+    return result;
+  }catch(err){
+    console.warn('Control availability check',err);
+    if(showStatus)setControlSyncStatus(context,'error','No fue posible verificar la disponibilidad.');
+    return null;
+  }
+}
+
+function parseSlotUnavailable(message){
+  const m=String(message||'').match(/SLOT_UNAVAILABLE\|([^|]*)\|([^|]*)\|(\d+)/i);
+  if(!m)return null;
+  return {
+    available:false,
+    reason:'OCCUPIED',
+    suggested_date:m[1]||null,
+    suggested_time:m[2]||null,
+    slot_minutes:Number(m[3]||30)
+  };
+}
+
+function bindControlAvailabilityEvents(context){
+  const ids=controlInputIds(context);
+  const dateEl=document.getElementById(ids.date);
+  const timeEl=document.getElementById(ids.time);
+
+  applyControlSlotStep(context);
+
+  dateEl?.addEventListener('change',()=>{
+    if(timeEl?.value)checkControlAvailability(context);
+  });
+  timeEl?.addEventListener('change',()=>checkControlAvailability(context));
+}
+
 function selectedPatientControlDoctorId(){
   const select=document.getElementById('patientControlDoctorSelect');
   if(select?.value)return select.value;
@@ -2629,20 +2800,23 @@ function controlCreatorLabel(c,context){
 }
 
 function controlListMarkup(rows,context){
-  const list=[...(rows||[])].sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
-  if(!list.length)return '<div class="empty-state">Aún no hay controles registrados.</div>';
+  const list=[...(rows||[])]
+    .filter(c=>c.status==='SCHEDULED')
+    .sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
+  if(!list.length)return '<div class="empty-state">Aún no hay controles agendados.</div>';
 
   return `<div class="control-list">${list.map(c=>`
-    <div class="control-card ${c.status==='CANCELLED'?'cancelled':''}">
+    <div class="control-card">
       <div class="control-card-main">
         <div class="control-date">${esc(formatControlDateTime(c.scheduled_at))}</div>
         <div class="control-meta">
-          <span class="control-status ${c.status==='CANCELLED'?'cancelled':'scheduled'}">${c.status==='CANCELLED'?'Cancelado':'Agendado'}</span>
+          <span class="control-status scheduled">Agendado</span>
           <span>${esc(controlCreatorLabel(c,context))}</span>
+          <span>${validControlSlotMinutes(c.slot_minutes||30)} min</span>
         </div>
         ${c.notes?`<div class="control-notes">${esc(c.notes)}</div>`:''}
       </div>
-      ${c.status==='SCHEDULED'?`<button type="button" class="secondary small-btn control-cancel-btn" data-cancel-control="${c.id}" data-control-context="${context}">Cancelar</button>`:''}
+      <button type="button" class="secondary small-btn control-cancel-btn" data-cancel-control="${c.id}" data-control-context="${context}">Cancelar</button>
     </div>`).join('')}</div>`;
 }
 
@@ -2774,6 +2948,13 @@ async function createPatientControl(e){
   }
 
   const notes=document.getElementById('patientControlNotes')?.value.trim()||null;
+
+  const availability=await checkControlAvailability('patient',true);
+  if(!availability?.available){
+    if(!availability)setControlSyncStatus('patient','error','No fue posible verificar el horario.');
+    return;
+  }
+
   const button=e.submitter||e.target.querySelector('button[type="submit"]');
   if(button)button.disabled=true;
   setControlSyncStatus('patient','syncing','Registrando control…');
@@ -2802,13 +2983,20 @@ async function createPatientControl(e){
     if(patientDate)patientDate.value=formatDateCL(today());
     if(patientTime)patientTime.value='';
     if(patientNotes)patientNotes.value='';
+    clearControlAvailability('patient');
 
     setControlSyncStatus('patient','ok','Control registrado y compartido');
     showToast('Control registrado','Tu médico recibirá la actualización automáticamente.','NEW_CONTROL');
     syncPatientControls().catch(()=>{});
   }catch(err){
-    setControlSyncStatus('patient','error','No se pudo registrar el control.');
-    alert(err.message);
+    const slot=parseSlotUnavailable(err.message);
+    if(slot){
+      renderControlAvailability('patient',slot,controlTime);
+      setControlSyncStatus('patient','','Ese horario acaba de ocuparse. Elige la alternativa sugerida.');
+    }else{
+      setControlSyncStatus('patient','error','No se pudo registrar el control.');
+      alert(err.message);
+    }
   }finally{
     if(button)button.disabled=false;
   }
@@ -2834,6 +3022,13 @@ async function createDoctorControl(e){
   }
 
   const notes=document.getElementById('doctorControlNotes')?.value.trim()||null;
+
+  const availability=await checkControlAvailability('doctor',true);
+  if(!availability?.available){
+    if(!availability)setControlSyncStatus('doctor','error','No fue posible verificar el horario.');
+    return;
+  }
+
   const button=e.submitter||e.target.querySelector('button[type="submit"]');
   if(button)button.disabled=true;
   setControlSyncStatus('doctor','syncing','Registrando control…');
@@ -2862,13 +3057,20 @@ async function createDoctorControl(e){
     if(doctorDate)doctorDate.value=formatDateCL(today());
     if(doctorTime)doctorTime.value='';
     if(doctorNotes)doctorNotes.value='';
+    clearControlAvailability('doctor');
 
     setControlSyncStatus('doctor','ok','Control registrado y compartido');
     showToast('Control registrado','El paciente recibirá la actualización automáticamente.','NEW_CONTROL');
     syncDoctorControls(patientId).catch(()=>{});
   }catch(err){
-    setControlSyncStatus('doctor','error','No se pudo registrar el control.');
-    alert(err.message);
+    const slot=parseSlotUnavailable(err.message);
+    if(slot){
+      renderControlAvailability('doctor',slot,controlTime);
+      setControlSyncStatus('doctor','','Ese horario acaba de ocuparse. Elige la alternativa sugerida.');
+    }else{
+      setControlSyncStatus('doctor','error','No se pudo registrar el control.');
+      alert(err.message);
+    }
   }finally{
     if(button)button.disabled=false;
   }
@@ -2882,32 +3084,30 @@ async function cancelSharedControl(id,context){
   if(!confirm(`¿Cancelar el control del ${formatControlDateTime(item.scheduled_at)}? El otro usuario será notificado.`))return;
 
   const previous=[...source];
-  const optimistic={...item,status:'CANCELLED',cancelled_at:new Date().toISOString(),cancelled_by_user_id:currentUser.id};
 
   if(context==='doctor'){
-    doctorPatientDetail.controls=source.map(c=>c.id===id?optimistic:c);
+    doctorPatientDetail.controls=source.filter(c=>c.id!==id);
     renderDoctorControls();
     setControlSyncStatus('doctor','syncing','Cancelando control…');
   }else{
-    patientControls=source.map(c=>c.id===id?optimistic:c);
+    patientControls=source.filter(c=>c.id!==id);
     renderPatientControls();
     setControlSyncStatus('patient','syncing','Cancelando control…');
   }
 
   try{
-    const rows=await dbRpc('bodycare_cancel_control',{p_control_id:id});
-    const saved=Array.isArray(rows)?rows[0]:rows;
+    await dbRpc('bodycare_cancel_control',{p_control_id:id});
 
     if(context==='doctor'){
-      doctorPatientDetail.controls=(doctorPatientDetail.controls||[]).map(c=>c.id===id?(saved||optimistic):c);
       renderDoctorControls();
-      setControlSyncStatus('doctor','ok','Control cancelado');
+      setControlSyncStatus('doctor','ok','Control cancelado · horario liberado');
       syncDoctorControls(doctorPatientDetail.profile.user_id).catch(()=>{});
+      if(document.getElementById('doctorControlTime')?.value)checkControlAvailability('doctor',false);
     }else{
-      patientControls=patientControls.map(c=>c.id===id?(saved||optimistic):c);
       renderPatientControls();
-      setControlSyncStatus('patient','ok','Control cancelado');
+      setControlSyncStatus('patient','ok','Control cancelado · horario liberado');
       syncPatientControls().catch(()=>{});
+      if(document.getElementById('patientControlTime')?.value)checkControlAvailability('patient',false);
     }
 
     showToast('Control cancelado','La otra persona recibió la actualización.','CONTROL_CANCELLED');
@@ -2962,8 +3162,12 @@ function bindPatientCare(){
     localStorage.setItem('bodycare_selected_control_doctor',e.target.value);
     patientControls=[];
     renderPatientControls();
+    applyControlSlotStep('patient');
+    clearControlAvailability('patient');
     syncPatientControls();
+    if(document.getElementById('patientControlTime')?.value)checkControlAvailability('patient');
   });
+  bindControlAvailabilityEvents('patient');
   document.getElementById('patientControlForm')?.addEventListener('submit',createPatientControl);
   document.getElementById('patientControlSyncStatus')?.addEventListener('click',()=>syncPatientControls());
   bindDateCLInputs();
@@ -2976,7 +3180,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.4'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.5'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -3337,14 +3541,16 @@ async function saveDoctorProfile(e){
     specialty:document.getElementById('docSpecialty').value.trim(),
     registration_number:document.getElementById('docRegistration').value.trim()||null,
     clinic_name:document.getElementById('docClinic').value.trim()||null,
-    professional_email:document.getElementById('docEmail').value.trim()||currentUser.email
+    professional_email:document.getElementById('docEmail').value.trim()||currentUser.email,
+    control_slot_minutes:validControlSlotMinutes(document.getElementById('docSlotMinutes')?.value||30)
   };
   try{
     if(doctorProfile){
       await dbUpdate('doctor_profiles',`user_id=eq.${encodeURIComponent(currentUser.id)}`,{
         display_name:payload.display_name,specialty:payload.specialty,
         registration_number:payload.registration_number,clinic_name:payload.clinic_name,
-        professional_email:payload.professional_email,updated_at:new Date().toISOString()
+        professional_email:payload.professional_email,control_slot_minutes:payload.control_slot_minutes,
+        updated_at:new Date().toISOString()
       });
     }else await dbInsert('doctor_profiles',payload);
     await loadData();render();
@@ -3369,6 +3575,7 @@ function doctorView(){
           <div><label>Nº registro / SIS</label><input id="docRegistration"></div>
           <div><label>Centro / consulta</label><input id="docClinic"></div>
           <div><label>Email profesional</label><input id="docEmail" type="email" value="${esc(currentUser.email||'')}"></div>
+          <div><label>Duración de cada control</label><select id="docSlotMinutes"><option value="15">15 minutos</option><option value="30" selected>30 minutos</option><option value="45">45 minutos</option><option value="60">60 minutos</option></select></div>
         </div><button class="primary" type="submit" style="margin-top:12px">Guardar perfil médico</button></form>
       </section>`
       :`
@@ -3376,7 +3583,15 @@ function doctorView(){
         <div class="doctor-row"><div>
           <strong>${esc(doctorProfile.display_name||account?.display_name||'Médico')}</strong>
           <div class="muted">${esc(doctorProfile.specialty||'Sin especialidad')}${doctorProfile.clinic_name?` · ${esc(doctorProfile.clinic_name)}`:''}</div>
+          <div class="doctor-slot-summary">Agenda: controles de ${validControlSlotMinutes(doctorProfile.control_slot_minutes||30)} minutos</div>
         </div><button id="editDoctorProfile" class="secondary small-btn">Editar perfil</button></div>
+        <div class="doctor-schedule-setting">
+          <div><label for="doctorSlotMinutesSetting">Duración de cada control</label><div class="muted">Define el bloque que BodyCare reservará en tu agenda.</div></div>
+          <select id="doctorSlotMinutesSetting">
+            ${[15,30,45,60].map(v=>`<option value="${v}" ${validControlSlotMinutes(doctorProfile.control_slot_minutes||30)===v?'selected':''}>${v} minutos</option>`).join('')}
+          </select>
+          <button type="button" id="saveDoctorSlotMinutes" class="secondary small-btn">Guardar agenda</button>
+        </div>
       </section>
       <section class="card">
         <h2 class="section-title">Mis pacientes</h2>
@@ -3389,6 +3604,21 @@ function doctorView(){
   `);
   bindCommonHeader();
   document.getElementById('doctorProfileForm')?.addEventListener('submit',saveDoctorProfile);
+  document.getElementById('saveDoctorSlotMinutes')?.addEventListener('click',async()=>{
+    const minutes=validControlSlotMinutes(document.getElementById('doctorSlotMinutesSetting')?.value||30);
+    try{
+      await dbUpdate('doctor_profiles',`user_id=eq.${encodeURIComponent(currentUser.id)}`,{
+        control_slot_minutes:minutes,
+        updated_at:new Date().toISOString()
+      });
+      await loadData();
+      render();
+      showToast('Agenda actualizada',`Los nuevos controles usarán bloques de ${minutes} minutos.`,'NEW_CONTROL');
+    }catch(err){
+      alert('No fue posible actualizar la duración de los controles: '+err.message);
+    }
+  });
+
   document.getElementById('editDoctorProfile')?.addEventListener('click',()=>{
     const name=prompt('Nombre profesional:',doctorProfile.display_name||'');if(name===null)return;
     const specialty=prompt('Especialidad:',doctorProfile.specialty||'');if(specialty===null)return;
@@ -3535,8 +3765,10 @@ function doctorPatientDetailView(){
             <div class="time-control-frame">
               <input id="doctorControlTime" type="time" required>
             </div>
+            <div id="doctorControlSlotInfo" class="slot-info">Bloques definidos en tu perfil: ${validControlSlotMinutes(doctorProfile?.control_slot_minutes||30)} minutos.</div>
           </div>
         </div>
+        <div id="doctorControlAvailability" class="control-availability"></div>
         <label for="doctorControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>
         <textarea id="doctorControlNotes" rows="2" maxlength="1000" placeholder="Ej: control de evolución"></textarea>
         <div class="form-actions"><button class="primary" type="submit">Registrar control</button></div>
@@ -3566,6 +3798,7 @@ function doctorPatientDetailView(){
   renderDoctorMessageThread();
   renderDoctorPrescriptionList();
   renderDoctorControls();
+  bindControlAvailabilityEvents('doctor');
   document.getElementById('doctorControlForm')?.addEventListener('submit',createDoctorControl);
   document.getElementById('doctorControlSyncStatus')?.addEventListener('click',()=>syncDoctorControls(p.user_id));
   bindDateCLInputs();

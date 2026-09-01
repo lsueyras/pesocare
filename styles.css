@@ -972,3 +972,81 @@ input[data-date-cl].date-invalid{
     overflow:hidden !important;
   }
 }
+
+/* BodyCare V15.5 — agenda por disponibilidad del médico */
+.slot-info{
+  margin-top:5px;
+  color:#667085;
+  font-size:.72rem;
+}
+.control-availability{
+  margin:8px 0 2px;
+}
+.control-availability.available{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  padding:8px 10px;
+  border-radius:10px;
+  background:#ecfdf3;
+  color:#027a48;
+  font-size:.78rem;
+  font-weight:650;
+}
+.availability-dot{
+  width:8px;height:8px;border-radius:50%;background:#12b76a;flex:0 0 auto;
+}
+.control-availability.unavailable{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:11px;
+  border:1px solid #fec84b;
+  border-radius:12px;
+  background:#fffaeb;
+  color:#93370d;
+}
+.control-availability.unavailable>div{
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  min-width:0;
+  font-size:.78rem;
+}
+.control-availability.unavailable>div>strong{
+  font-size:.82rem;
+}
+.doctor-slot-summary{
+  margin-top:5px;
+  color:#175cd3;
+  font-size:.76rem;
+  font-weight:700;
+}
+.doctor-schedule-setting{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(140px,180px) auto;
+  gap:10px;
+  align-items:end;
+  margin-top:14px;
+  padding-top:14px;
+  border-top:1px solid #eaecf0;
+}
+.doctor-schedule-setting label{margin-bottom:3px}
+.doctor-schedule-setting select{width:100%}
+
+@media(max-width:600px){
+  .control-availability.unavailable{
+    align-items:stretch;
+    flex-direction:column;
+  }
+  .control-availability.unavailable button{
+    width:100%;
+  }
+  .doctor-schedule-setting{
+    grid-template-columns:1fr;
+  }
+  .doctor-schedule-setting button{
+    width:100%;
+  }
+}

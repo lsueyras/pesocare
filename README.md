@@ -329,3 +329,19 @@ https://lsueyras.github.io/pesocare/
 - El borde visible pertenece al contenedor y no al input nativo.
 - Se impide que WebKit expanda el control más allá de la columna.
 - Hora queda con el mismo ancho visual que Fecha, Médico y los demás campos.
+
+
+## BodyCare V15.5 — Agenda por profesional
+- Cada médico configura duración de control: 15, 30, 45 o 60 minutos.
+- La duración se guarda en doctor_profiles.control_slot_minutes.
+- Cada control conserva su duración original en care_controls.slot_minutes.
+- La disponibilidad se valida contra TODOS los pacientes del médico.
+- Se bloquean controles que se superponen, no solo los de igual hora.
+- El paciente nunca recibe datos de otros pacientes: solo disponible/no disponible.
+- Si el horario está ocupado o fuera de la grilla del médico:
+  - BodyCare bloquea el registro;
+  - muestra el horario disponible más cercano;
+  - ofrece botón “Usar este horario”.
+- La creación vuelve a comprobar disponibilidad bajo bloqueo transaccional.
+- Controles cancelados desaparecen de la agenda visible, liberan el espacio y permanecen en BD para auditoría.
+- RPC nueva: bodycare_check_control_slot.
