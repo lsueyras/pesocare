@@ -74,3 +74,18 @@ https://lsueyras.github.io/pesocare/
 - Activada: sesión persistente.
 - Desactivada: sesión termina al cerrar la pestaña/app.
 - Cerrar sesión elimina cualquier sesión almacenada.
+
+
+## V9 — Ajuste ancho uniforme en Registrar peso
+- Se corrige el ancho del campo `Fecha` para que coincida visualmente con `Peso` y `Circunferencia abdominal`.
+- Se refuerza el layout del `record-grid` especialmente en iPhone/Safari.
+- Se corrige además un fragmento de CSS heredado que podía afectar media queries.
+
+
+## V10 — Registro de cuenta con control de reintentos
+- Traduce errores de Supabase a mensajes claros en español.
+- Detecta el límite temporal de seguridad del registro.
+- Deshabilita `Crear cuenta` durante la espera y muestra cuenta regresiva.
+- No bloquea `Ingresar`.
+- Recuerda revisar Bandeja de entrada y Spam.
+- Mejora también el mensaje de recuperación de contraseña.

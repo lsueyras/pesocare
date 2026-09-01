@@ -8,6 +8,7 @@ const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
+const SIGNUP_COOLDOWN_KEY='pesocare_signup_cooldown_until';
 
 const app=document.getElementById('app');
 let session=null, currentUser=null, profile=null, records=[];
@@ -160,6 +161,81 @@ function brandBlock(subtitle='Seguimiento personal'){
   </div>`;
 }
 
+
+function getSignupCooldownSeconds(){
+  const until=Number(localStorage.getItem(SIGNUP_COOLDOWN_KEY)||0);
+  const remaining=Math.ceil((until-Date.now())/1000);
+  return Math.max(0,remaining);
+}
+
+function setSignupCooldown(seconds=60){
+  const safe=Math.max(1,Math.min(300,Number(seconds)||60));
+  localStorage.setItem(SIGNUP_COOLDOWN_KEY,String(Date.now()+safe*1000));
+}
+
+function parseRetrySeconds(message){
+  const m=String(message||'');
+  const match=m.match(/after\s+(\d+)\s+seconds?/i);
+  if(match) return Math.max(1,Number(match[1]));
+  if(/security purposes|rate limit|too many requests/i.test(m)) return 60;
+  return null;
+}
+
+function friendlyAuthError(message){
+  const m=String(message||'');
+  const retry=parseRetrySeconds(m);
+
+  if(retry!==null){
+    return `Por seguridad, debes esperar ${retry} segundo${retry===1?'':'s'} antes de solicitar otro correo de registro. Revisa primero tu bandeja de entrada y Spam.`;
+  }
+  if(/email not confirmed/i.test(m)){
+    return 'Debes confirmar tu correo antes de ingresar. Revisa tu bandeja de entrada y Spam.';
+  }
+  if(/user already registered|already been registered|email.*registered/i.test(m)){
+    return 'Este correo ya tiene una cuenta. Usa “Ingresar” o “Olvidé mi contraseña”.';
+  }
+  if(/invalid login credentials/i.test(m)){
+    return 'Correo o contraseña incorrectos.';
+  }
+  return 'No fue posible completar la operación. Inténtalo nuevamente.';
+}
+
+let signupTimer=null;
+function updateSignupCooldownUI(){
+  const btn=document.getElementById('signup');
+  if(!btn) return;
+
+  const seconds=getSignupCooldownSeconds();
+  if(signupTimer){
+    clearInterval(signupTimer);
+    signupTimer=null;
+  }
+
+  if(seconds<=0){
+    btn.disabled=false;
+    btn.textContent='Crear cuenta';
+    return;
+  }
+
+  const render=()=>{
+    const left=getSignupCooldownSeconds();
+    if(left<=0){
+      btn.disabled=false;
+      btn.textContent='Crear cuenta';
+      if(signupTimer){
+        clearInterval(signupTimer);
+        signupTimer=null;
+      }
+    }else{
+      btn.disabled=true;
+      btn.textContent=`Espera ${left} s`;
+    }
+  };
+
+  render();
+  signupTimer=setInterval(render,1000);
+}
+
 function loginView(message=''){
   app.innerHTML=shell(`
     <section class="card auth-card">
@@ -193,65 +269,107 @@ function loginView(message=''){
   document.getElementById('authForm').addEventListener('submit',e=>auth(e,false));
   document.getElementById('signup').addEventListener('click',e=>auth(e,true));
   document.getElementById('forgot').addEventListener('click',forgotPassword);
+  updateSignupCooldownUI();
 }
 
 async function auth(e,signup){
   e.preventDefault();
+
   const email=document.getElementById('email').value.trim();
   const password=document.getElementById('password').value;
   const remember=document.getElementById('rememberMe')?.checked ?? true;
   saveRememberPreference(remember);
+
   const msg=document.getElementById('authMsg');
   msg.textContent='';
+
+  if(signup && getSignupCooldownSeconds()>0){
+    updateSignupCooldownUI();
+    msg.textContent='Espera unos segundos antes de solicitar otro correo de registro.';
+    return;
+  }
 
   try{
     if(signup){
       const url=`${SUPABASE_URL}/auth/v1/signup?redirect_to=${encodeURIComponent(APP_URL)}`;
-      const data=await jsonFetch(url,{method:'POST',headers:authHeaders(),body:JSON.stringify({email,password})});
+      const data=await jsonFetch(url,{
+        method:'POST',
+        headers:authHeaders(),
+        body:JSON.stringify({email,password})
+      });
+
+      setSignupCooldown(60);
+      updateSignupCooldownUI();
+
       if(data.access_token){
         saveSession({
           access_token:data.access_token,
           refresh_token:data.refresh_token,
           expires_at:Date.now()+Number(data.expires_in||3600)*1000
         },remember);
+
         await ensureSession();
         await loadData();
         render();
       }else{
-        msg.textContent='Cuenta creada. Revisa tu correo y confirma el registro antes de ingresar.';
+        msg.className='notice success';
+        msg.textContent='Solicitud recibida. Revisa tu correo y Spam para confirmar la cuenta. Por seguridad, un nuevo correo podrá solicitarse después de aproximadamente 60 segundos.';
       }
     }else{
       const data=await jsonFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`,{
-        method:'POST',headers:authHeaders(),body:JSON.stringify({email,password})
+        method:'POST',
+        headers:authHeaders(),
+        body:JSON.stringify({email,password})
       });
+
       saveSession({
         access_token:data.access_token,
         refresh_token:data.refresh_token,
         expires_at:Date.now()+Number(data.expires_in||3600)*1000
       },remember);
+
       if(await ensureSession()){
         await loadData();
         render();
       }
     }
   }catch(err){
-    const m=String(err.message||err);
-    msg.textContent=m.toLowerCase().includes('email not confirmed')
-      ?'Debes confirmar tu correo antes de ingresar.'
-      :'No fue posible completar la operación: '+m;
+    const raw=String(err.message||err);
+    const retry=parseRetrySeconds(raw);
+
+    if(signup && retry!==null){
+      setSignupCooldown(retry);
+      updateSignupCooldownUI();
+    }
+
+    msg.className='error';
+    msg.textContent=friendlyAuthError(raw);
   }
 }
 
 async function forgotPassword(){
   const email=document.getElementById('email').value.trim();
   const msg=document.getElementById('authMsg');
-  if(!email){msg.textContent='Ingresa primero tu correo.';return}
+
+  if(!email){
+    msg.className='error';
+    msg.textContent='Ingresa primero tu correo.';
+    return;
+  }
+
   try{
     await jsonFetch(`${SUPABASE_URL}/auth/v1/recover?redirect_to=${encodeURIComponent(APP_URL)}`,{
-      method:'POST',headers:authHeaders(),body:JSON.stringify({email})
+      method:'POST',
+      headers:authHeaders(),
+      body:JSON.stringify({email})
     });
-    msg.textContent='Te enviamos un correo para recuperar tu contraseña.';
-  }catch(err){msg.textContent=err.message}
+
+    msg.className='notice success';
+    msg.textContent='Te enviamos un correo para recuperar tu contraseña. Revisa también Spam.';
+  }catch(err){
+    msg.className='error';
+    msg.textContent=friendlyAuthError(String(err.message||err));
+  }
 }
 
 async function loadData(){

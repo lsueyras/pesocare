@@ -12,8 +12,8 @@ button,input{font:inherit}button{cursor:pointer}.shell{max-width:980px;margin:0 
 .card{background:white;border:1px solid #e4e7ec;border-radius:18px;padding:18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
 .auth-card{max-width:460px;margin:36px auto}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .grid>div{min-width:0}
-.record-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:end}
-.record-grid>div{min-width:0}
+.record-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:stretch;width:100%}
+.record-grid>div{min-width:0;width:100%;display:flex;flex-direction:column}
 
 label{display:block;font-size:.9rem;font-weight:650;margin-bottom:5px}
 input{
@@ -71,7 +71,7 @@ th,td{padding:10px 7px;border-bottom:1px solid #eaecf0;text-align:left;font-size
   .card{padding:15px}
   .top{gap:8px}
   .secondary{padding-left:10px;padding-right:10px}
-}.metrics{grid-template-columns:1fr 1fr}.auth-card{margin:12px auto}.card{padding:15px}}
+}
 
 /* Safari/iOS date fields */
 input[type="date"]{
@@ -107,9 +107,25 @@ input[type="date"]::-webkit-date-and-time-value{
 .record-grid input,
 .record-grid input[type="date"],
 .record-grid input[type="text"]{
+  display:block;
+  width:100% !important;
+  max-width:100% !important;
+  min-width:0 !important;
+  inline-size:100% !important;
+  box-sizing:border-box;
+  align-self:stretch;
+}
+
+.record-grid input[type="date"]{
+  padding-right:12px;
+}
+.record-grid input[type="date"]::-webkit-date-and-time-value{
   width:100%;
-  max-width:100%;
   min-width:0;
+  text-align:left;
+}
+.record-grid input[type="date"]::-webkit-calendar-picker-indicator{
+  margin-left:auto;
 }
 
 @media(max-width:860px){
@@ -121,3 +137,18 @@ input[type="date"]::-webkit-date-and-time-value{
 .remember-row span{display:flex;flex-direction:column;gap:2px;min-width:0;line-height:1.2}
 .remember-row strong{font-size:.9rem}
 .remember-row small{color:#667085;font-size:.78rem}
+
+/* V9 field-width fix */
+.record-grid label{
+  width:100%;
+}
+
+button:disabled{
+  opacity:.58;
+  cursor:not-allowed;
+}
+#authMsg.notice{
+  display:block;
+  min-height:0;
+  margin-top:14px;
+}
