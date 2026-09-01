@@ -235,3 +235,26 @@ button:disabled{
     max-width:100%;
   }
 }
+
+select,textarea{width:100%;max-width:100%;min-width:0;border:1px solid #d0d5dd;border-radius:12px;padding:10px 12px;background:#fff;color:#182230;font:inherit;font-size:16px;box-sizing:border-box}
+textarea{resize:vertical}select:focus,textarea:focus{outline:3px solid rgba(23,92,211,.15);border-color:#175cd3}
+.portal-tabs{display:flex;gap:8px;overflow-x:auto;margin:-4px 0 14px;padding-bottom:2px}
+.portal-tab{min-height:38px;white-space:nowrap;background:#fff;color:#475467;border:1px solid #d0d5dd;padding:7px 12px}
+.portal-tab.active{background:#175cd3;color:#fff;border-color:#175cd3}
+.card-head,.doctor-row,.patient-row,.support-admin-row{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.doctor-row,.patient-row,.support-admin-row{padding:12px 0;border-bottom:1px solid #eaecf0}
+.doctor-row:last-child,.patient-row:last-child,.support-admin-row:last-child{border-bottom:0}
+.small-btn{min-height:38px;padding:7px 10px;font-size:.84rem}.danger-btn{background:#fff;color:#b42318;border:1px solid #fda29b}
+.empty-state{padding:14px 0;color:#667085}
+.integration-note{margin:8px 0 12px;padding:9px 11px;border-radius:10px;background:#fffaeb;color:#93370d;font-size:.82rem;border:1px solid #fedf89}
+.integration-badge{background:#fffaeb;color:#93370d;border:1px solid #fedf89;border-radius:999px;padding:5px 9px;font-size:.75rem}
+.inline-form{display:flex;gap:8px;margin-top:12px}.inline-form input{flex:1}
+.prescription-card{border:1px solid #e4e7ec;border-radius:12px;padding:12px;margin-top:10px}.prescription-title{font-weight:800;font-size:1rem;margin-bottom:5px}.small-muted{color:#98a2b3;font-size:.75rem;margin-top:5px}
+.message-thread{margin:10px 0;padding:10px;max-height:320px;overflow-y:auto;background:#f8fafc;border-radius:12px;display:flex;flex-direction:column;gap:8px}
+.message-bubble{max-width:82%;padding:9px 11px;border-radius:12px;background:#fff;border:1px solid #e4e7ec}.message-bubble.mine{align-self:flex-end;background:#eff8ff;border-color:#b2ddff}.message-bubble.theirs{align-self:flex-start}.message-bubble span{display:block;color:#98a2b3;font-size:.7rem;margin-top:4px}
+.message-form{display:flex;gap:8px;align-items:flex-end}.message-form textarea{flex:1}.ticket-list{margin-top:12px}.ticket-row{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #eaecf0}
+.role-badge,.status-chip,.owner-chip{display:inline-block;border-radius:999px;padding:4px 8px;font-size:.72rem;font-weight:750}.role-patient{background:#eff8ff;color:#175cd3}.role-doctor{background:#ecfdf3;color:#027a48}.role-admin{background:#f4f3ff;color:#6941c6}
+.status-active,.status-resolved{background:#ecfdf3;color:#027a48}.status-suspended{background:#fef3f2;color:#b42318}.status-new{background:#eff8ff;color:#175cd3}.status-in_progress{background:#fffaeb;color:#93370d}.owner-chip{background:#f4f3ff;color:#6941c6}
+.badge-row{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.admin-hero{display:flex;align-items:center;justify-content:space-between;gap:12px}.admin-user-list{margin-top:12px}
+.admin-user-card{display:flex;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid #eaecf0}.admin-user-main{min-width:0}.admin-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-content:flex-start}.loading{padding:25px;text-align:center;color:#667085}
+@media(max-width:700px){.card-head,.doctor-row,.patient-row,.support-admin-row,.admin-user-card{align-items:flex-start;flex-direction:column}.inline-form,.message-form{flex-direction:column;align-items:stretch}.admin-actions{justify-content:flex-start}.portal-tabs{margin-top:4px}}

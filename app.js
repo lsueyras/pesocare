@@ -12,6 +12,10 @@ const SIGNUP_COOLDOWN_KEY='pesocare_signup_cooldown_until';
 
 const app=document.getElementById('app');
 let session=null, currentUser=null, profile=null, records=[];
+let account=null, roles=[], activePortal='PATIENT';
+let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], supportTickets=[];
+let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
+let adminUsers=[], adminTickets=[], adminLoaded=false;
 
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const parseDate=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(Date.UTC(y,m-1,d))};
@@ -150,6 +154,67 @@ async function dbUpdate(table,filter,obj){
   });
 }
 
+
+
+async function invokeFunction(name,body){
+  const res=await fetch(`${SUPABASE_URL}/functions/v1/${name}`,{
+    method:'POST',
+    headers:{...authHeaders(session?.access_token),'Content-Type':'application/json'},
+    body:JSON.stringify(body)
+  });
+  const text=await res.text();
+  let data={};
+  if(text){try{data=JSON.parse(text)}catch{data={error:text}}}
+  if(!res.ok)throw new Error(data?.error||`Error ${res.status}`);
+  return data;
+}
+
+const hasRole=role=>roles.includes(role);
+
+function portalTabs(){
+  const available=[
+    ['PATIENT','Mi seguimiento'],
+    ['DOCTOR','Médico'],
+    ['ADMIN','Administración']
+  ].filter(([role])=>hasRole(role));
+  if(available.length<=1)return '';
+  return `<div class="portal-tabs">${available.map(([role,label])=>
+    `<button type="button" class="portal-tab ${activePortal===role?'active':''}" data-portal="${role}">${label}</button>`
+  ).join('')}</div>`;
+}
+
+function bindCommonHeader(){
+  document.getElementById('logout')?.addEventListener('click',logout);
+  document.querySelectorAll('[data-portal]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const portal=btn.dataset.portal;
+      if(!portal||!hasRole(portal))return;
+      activePortal=portal;
+      localStorage.setItem('pesocare_active_portal',portal);
+      doctorPatientDetail=null;
+      render();
+    });
+  });
+}
+
+function suspendedView(){
+  app.innerHTML=shell(`${header()}
+    <section class="card">
+      <h2 class="section-title">Cuenta suspendida</h2>
+      <p class="muted">Tu cuenta está temporalmente suspendida. Contacta al soporte de PesoCare para revisar el acceso.</p>
+    </section>`);
+  bindCommonHeader();
+}
+
+function roleBadge(role){
+  const labels={PATIENT:'Paciente',DOCTOR:'Médico',ADMIN:'Admin'};
+  return `<span class="role-badge role-${role.toLowerCase()}">${labels[role]||role}</span>`;
+}
+
+function formatDateTime(value){
+  if(!value)return '—';
+  try{return new Date(value).toLocaleString('es-CL',{dateStyle:'short',timeStyle:'short'})}catch{return value}
+}
 
 function brandBlock(subtitle='Seguimiento personal'){
   return `<div class="brandrow brand-hero">
@@ -373,23 +438,71 @@ async function forgotPassword(){
 }
 
 async function loadData(){
-  const p=await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&limit=1`);
-  profile=p?.[0]||null;
-  if(profile){
-    records=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=measured_on.asc,created_at.asc`)||[];
-  }else records=[];
+  const a=await dbGet(`user_accounts?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&limit=1`);
+  account=a?.[0]||null;
+  const rr=await dbGet(`user_roles?select=role&user_id=eq.${encodeURIComponent(currentUser.id)}`)||[];
+  roles=rr.map(r=>r.role);
+
+  const storedPortal=localStorage.getItem('pesocare_active_portal');
+  if(storedPortal&&roles.includes(storedPortal))activePortal=storedPortal;
+  else if(roles.includes('PATIENT'))activePortal='PATIENT';
+  else if(roles.includes('DOCTOR'))activePortal='DOCTOR';
+  else if(roles.includes('ADMIN'))activePortal='ADMIN';
+
+  profile=null;records=[];careLinks=[];linkedDoctorProfiles=[];
+  patientPrescriptions=[];patientMessages=[];supportTickets=[];
+  doctorProfile=null;doctorPatients=[];
+
+  if(account?.status!=='ACTIVE')return;
+
+  if(hasRole('PATIENT')){
+    const p=await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&limit=1`);
+    profile=p?.[0]||null;
+    if(profile){
+      records=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=measured_on.asc,created_at.asc`)||[];
+    }
+
+    careLinks=await dbGet(`doctor_patient_links?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.ACTIVE&order=created_at.asc`)||[];
+    if(careLinks.length){
+      const ids=careLinks.map(l=>l.doctor_user_id).join(',');
+      linkedDoctorProfiles=await dbGet(`doctor_profiles?select=*&user_id=in.(${ids})`)||[];
+      patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
+      patientPrescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&order=created_at.desc`)||[];
+    }
+    supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
+  }
+
+  if(hasRole('DOCTOR')){
+    const dp=await dbGet(`doctor_profiles?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&limit=1`);
+    doctorProfile=dp?.[0]||null;
+    const links=await dbGet(`doctor_patient_links?select=*&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.ACTIVE&order=created_at.asc`)||[];
+    if(links.length){
+      const ids=links.map(l=>l.patient_user_id).join(',');
+      const patientProfiles=await dbGet(`profiles?select=*&user_id=in.(${ids})`)||[];
+      doctorPatients=links.map(l=>({link:l,profile:patientProfiles.find(p=>p.user_id===l.patient_user_id)||null}));
+    }
+  }
 }
 
-function render(){profile?dashboardView():initialProfileView()}
+function render(){
+  if(account?.status!=='ACTIVE')return suspendedView();
+  if(activePortal==='ADMIN'&&hasRole('ADMIN'))return adminView();
+  if(activePortal==='DOCTOR'&&hasRole('DOCTOR')){
+    if(doctorPatientDetail)return doctorPatientDetailView();
+    return doctorView();
+  }
+  return profile?dashboardView():initialProfileView();
+}
 
 function header(){
+  const display=doctorProfile?.display_name||profile?.full_name||account?.display_name||currentUser?.email||'';
   return `<div class="top">
     <div class="brandrow">
       <img src="${BRAND_LOGO_URL}" alt="Logo PesoCare" class="brand-image brand-image-small" onerror="this.style.display='none'">
-      <div><div class="brand">PesoCare</div><div class="muted">${esc(currentUser?.email||'')}</div></div>
+      <div><div class="brand">PesoCare</div><div class="muted">${esc(display)}</div></div>
     </div>
     <button class="secondary" id="logout">Salir</button>
-  </div>`;
+  </div>${portalTabs()}`;
 }
 
 function initialProfileView(){
@@ -412,7 +525,7 @@ function initialProfileView(){
       </form>
     </section>`);
   document.getElementById('profileForm').addEventListener('submit',createProfile);
-  document.getElementById('logout').addEventListener('click',logout);
+  bindCommonHeader();
 }
 
 async function createProfile(e){
@@ -534,12 +647,79 @@ function dashboardView(){
       <h2 class="section-title">Historial</h2>
       <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circ. abdominal</th></tr></thead>
       <tbody>${sorted.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOf(r.measured_on)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table></div>
+    </section>
+    <section class="card">
+      <h2 class="section-title">Mi equipo médico</h2>
+      <div class="muted">Autoriza a un médico para revisar tu seguimiento.</div>
+      ${linkedDoctorProfiles.length
+        ? linkedDoctorProfiles.map(d=>`
+          <div class="doctor-row">
+            <div>
+              <strong>${esc(d.display_name||'Médico')}</strong>
+              <div class="muted">${esc(d.specialty||'Especialidad pendiente')}${d.clinic_name?` · ${esc(d.clinic_name)}`:''}</div>
+              <div class="integration-note">Validación RNPI: ${d.verification_status==='VERIFIED'?'verificada':'integración pendiente'}</div>
+            </div>
+            <button type="button" class="secondary small-btn" data-revoke-doctor="${d.user_id}">Desvincular</button>
+          </div>`).join('')
+        : '<div class="empty-state">Aún no has vinculado un médico.</div>'}
+      <form id="linkDoctorForm" class="inline-form">
+        <input id="doctorEmail" type="email" placeholder="Correo del médico" required>
+        <button class="secondary" type="submit">Vincular médico</button>
+      </form>
+      <p id="doctorLinkMsg" class="error"></p>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Indicaciones compartidas</h2>
+      <div class="integration-note">La receta electrónica, firma y conexión SNRE quedan pendientes. Las indicaciones compartidas funcionan dentro de PesoCare, pero todavía no sustituyen una receta oficial.</div>
+      ${patientPrescriptions.length
+        ? patientPrescriptions.map(p=>`
+          <div class="prescription-card">
+            <div class="prescription-title">${esc(p.medication_name)}</div>
+            <div><strong>Dosis:</strong> ${esc(p.dose_text)}</div>
+            <div><strong>Frecuencia:</strong> ${esc(p.frequency_text)}</div>
+            ${p.duration_text?`<div><strong>Duración:</strong> ${esc(p.duration_text)}</div>`:''}
+            ${p.instructions?`<div class="muted">${esc(p.instructions)}</div>`:''}
+            <div class="small-muted">Integración legal pendiente</div>
+          </div>`).join('')
+        : '<div class="empty-state">No tienes indicaciones compartidas.</div>'}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Mensajes con tu médico</h2>
+      ${linkedDoctorProfiles.length?`
+        <select id="patientDoctorSelect">
+          ${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}">${esc(d.display_name||'Médico')}</option>`).join('')}
+        </select>
+        <div id="patientMessageThread" class="message-thread"></div>
+        <form id="patientMessageForm" class="message-form">
+          <textarea id="patientMessageText" rows="3" maxlength="4000" placeholder="Escribe un mensaje..." required></textarea>
+          <button class="primary" type="submit">Enviar mensaje</button>
+        </form>`
+      :'<div class="empty-state">Vincula un médico para habilitar mensajería.</div>'}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Soporte PesoCare</h2>
+      <p class="muted">Reporta un problema directamente desde la aplicación.</p>
+      <form id="supportForm">
+        <div class="grid">
+          <div><label>Asunto</label><input id="supportSubject" required placeholder="Ej: No puedo registrar un dato"></div>
+          <div><label>Descripción</label><textarea id="supportDescription" rows="3" required></textarea></div>
+        </div>
+        <button class="secondary" type="submit" style="margin-top:12px">Enviar soporte</button>
+        <p id="supportMsg" class="error"></p>
+      </form>
+      ${supportTickets.length?`<div class="ticket-list">${supportTickets.slice(0,5).map(t=>`
+        <div class="ticket-row"><strong>${esc(t.subject)}</strong><span class="status-chip status-${t.status.toLowerCase()}">${t.status}</span></div>`).join('')}</div>`:''}
     </section>`);
   document.getElementById('weightForm').addEventListener('submit',addWeight);
   document.getElementById('reportBtn').addEventListener('click',generateReport);
   document.getElementById('editPlan').addEventListener('click',editPlan);
-  document.getElementById('logout').addEventListener('click',logout);
+  bindCommonHeader();
+  bindPatientCare();
   drawCharts(sorted);
+  renderPatientMessageThread();
 }
 
 
@@ -794,6 +974,383 @@ function generateReport(){
   win.document.close();
 }
 
+
+function doctorNameById(userId){
+  return linkedDoctorProfiles.find(d=>d.user_id===userId)?.display_name||'Médico';
+}
+function linkForDoctor(userId){return careLinks.find(l=>l.doctor_user_id===userId)}
+
+function bindPatientCare(){
+  document.getElementById('linkDoctorForm')?.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const email=document.getElementById('doctorEmail').value.trim();
+    const msg=document.getElementById('doctorLinkMsg');msg.textContent='';
+    try{
+      await invokeFunction('care-links',{action:'link_doctor_by_email',doctor_email:email});
+      await loadData();render();
+    }catch(err){msg.textContent=err.message}
+  });
+
+  document.querySelectorAll('[data-revoke-doctor]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const link=linkForDoctor(btn.dataset.revokeDoctor);
+    if(!link||!confirm('¿Desvincular este médico?'))return;
+    try{await invokeFunction('care-links',{action:'revoke_link',link_id:link.id});await loadData();render()}
+    catch(err){alert(err.message)}
+  }));
+
+  document.getElementById('patientDoctorSelect')?.addEventListener('change',renderPatientMessageThread);
+  document.getElementById('patientMessageForm')?.addEventListener('submit',sendPatientMessage);
+
+  document.getElementById('supportForm')?.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const msg=document.getElementById('supportMsg');msg.textContent='';
+    try{
+      await dbInsert('support_tickets',{
+        user_id:currentUser.id,
+        subject:document.getElementById('supportSubject').value.trim(),
+        description:document.getElementById('supportDescription').value.trim(),
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'v13'}
+      });
+      msg.className='notice success';msg.textContent='Ticket enviado a PesoCare Admin.';
+      supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
+    }catch(err){msg.textContent=err.message}
+  });
+}
+
+function renderPatientMessageThread(){
+  const select=document.getElementById('patientDoctorSelect');
+  const el=document.getElementById('patientMessageThread');
+  if(!select||!el)return;
+  const doctorId=select.value;
+  const messages=patientMessages.filter(m=>m.doctor_user_id===doctorId);
+  el.innerHTML=messages.length?messages.map(m=>`
+    <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}">
+      <div>${esc(m.message)}</div><span>${formatDateTime(m.created_at)}</span>
+    </div>`).join(''):'<div class="empty-state">Aún no hay mensajes.</div>';
+  el.scrollTop=el.scrollHeight;
+}
+
+async function sendPatientMessage(e){
+  e.preventDefault();
+  const doctorId=document.getElementById('patientDoctorSelect')?.value;
+  const input=document.getElementById('patientMessageText');
+  const message=input?.value.trim();
+  if(!doctorId||!message)return;
+  try{
+    await dbInsert('care_messages',{doctor_user_id:doctorId,patient_user_id:currentUser.id,sender_user_id:currentUser.id,message});
+    input.value='';
+    patientMessages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
+    renderPatientMessageThread();
+  }catch(err){alert(err.message)}
+}
+
+async function saveDoctorProfile(e){
+  e.preventDefault();
+  const payload={
+    user_id:currentUser.id,
+    display_name:document.getElementById('docName').value.trim(),
+    specialty:document.getElementById('docSpecialty').value.trim(),
+    registration_number:document.getElementById('docRegistration').value.trim()||null,
+    clinic_name:document.getElementById('docClinic').value.trim()||null,
+    professional_email:document.getElementById('docEmail').value.trim()||currentUser.email
+  };
+  try{
+    if(doctorProfile){
+      await dbUpdate('doctor_profiles',`user_id=eq.${encodeURIComponent(currentUser.id)}`,{
+        display_name:payload.display_name,specialty:payload.specialty,
+        registration_number:payload.registration_number,clinic_name:payload.clinic_name,
+        professional_email:payload.professional_email,updated_at:new Date().toISOString()
+      });
+    }else await dbInsert('doctor_profiles',payload);
+    await loadData();render();
+  }catch(err){alert(err.message)}
+}
+
+function doctorView(){
+  app.innerHTML=shell(`${header()}
+    <section class="card">
+      <div class="card-head">
+        <div><h2 class="section-title">PesoCare Pro</h2><div class="muted">Seguimiento de pacientes vinculados</div></div>
+        <span class="integration-badge">RNPI pendiente</span>
+      </div>
+      <div class="integration-note">La validación automática del registro profesional queda pendiente de integración y no bloquea esta versión.</div>
+    </section>
+    ${!doctorProfile?`
+      <section class="card">
+        <h2 class="section-title">Completa tu perfil profesional</h2>
+        <form id="doctorProfileForm"><div class="grid">
+          <div><label>Nombre profesional</label><input id="docName" required value="${esc(account?.display_name||'')}"></div>
+          <div><label>Especialidad</label><input id="docSpecialty" required></div>
+          <div><label>Nº registro / SIS</label><input id="docRegistration"></div>
+          <div><label>Centro / consulta</label><input id="docClinic"></div>
+          <div><label>Email profesional</label><input id="docEmail" type="email" value="${esc(currentUser.email||'')}"></div>
+        </div><button class="primary" type="submit" style="margin-top:12px">Guardar perfil médico</button></form>
+      </section>`
+      :`
+      <section class="card">
+        <div class="doctor-row"><div>
+          <strong>${esc(doctorProfile.display_name||account?.display_name||'Médico')}</strong>
+          <div class="muted">${esc(doctorProfile.specialty||'Sin especialidad')}${doctorProfile.clinic_name?` · ${esc(doctorProfile.clinic_name)}`:''}</div>
+        </div><button id="editDoctorProfile" class="secondary small-btn">Editar perfil</button></div>
+      </section>
+      <section class="card">
+        <h2 class="section-title">Mis pacientes</h2>
+        ${doctorPatients.length?doctorPatients.map(x=>`
+          <div class="patient-row"><div><strong>${esc(x.profile?.full_name||'Paciente')}</strong>
+          <div class="muted">${x.profile?`Inicio ${fmt(x.profile.start_date)} · ${x.profile.planned_weeks} semanas`:'Ficha pendiente'}</div>
+          </div><button class="primary small-btn" data-open-patient="${x.link.patient_user_id}">Abrir seguimiento</button></div>`).join('')
+          :'<div class="empty-state">Aún no tienes pacientes vinculados. El paciente debe autorizarte usando tu correo.</div>'}
+      </section>`}
+  `);
+  bindCommonHeader();
+  document.getElementById('doctorProfileForm')?.addEventListener('submit',saveDoctorProfile);
+  document.getElementById('editDoctorProfile')?.addEventListener('click',()=>{
+    const name=prompt('Nombre profesional:',doctorProfile.display_name||'');if(name===null)return;
+    const specialty=prompt('Especialidad:',doctorProfile.specialty||'');if(specialty===null)return;
+    const clinic=prompt('Centro / consulta:',doctorProfile.clinic_name||'');if(clinic===null)return;
+    dbUpdate('doctor_profiles',`user_id=eq.${encodeURIComponent(currentUser.id)}`,{
+      display_name:name.trim(),specialty:specialty.trim(),clinic_name:clinic.trim()||null,updated_at:new Date().toISOString()
+    }).then(()=>loadData()).then(render).catch(err=>alert(err.message));
+  });
+  document.querySelectorAll('[data-open-patient]').forEach(btn=>btn.addEventListener('click',()=>openDoctorPatient(btn.dataset.openPatient)));
+}
+
+function weekOfFor(date,p){return Math.max(0,Math.floor((parseDate(date)-parseDate(p.start_date))/(7*86400000)))}
+
+function buildStandaloneChart(rows,p,field,goal=null,yLabel='',suffix=''){
+  const weekly=new Map();
+  rows.forEach(r=>{
+    const raw=r[field];if(raw===null||raw===undefined||raw==='')return;
+    const w=weekOfFor(r.measured_on,p);if(w<=p.planned_weeks)weekly.set(w,Number(raw));
+  });
+  const points=[...weekly.entries()].sort((a,b)=>a[0]-b[0]);
+  if(!points.length)return '<div class="empty-state">Sin datos suficientes.</div>';
+  const vals=points.map(x=>x[1]).concat(goal!==null?[Number(goal)]:[]);
+  let min=Math.min(...vals),max=Math.max(...vals);
+  if(max-min<4){min-=2;max+=2}else{const pad=(max-min)*.15;min-=pad;max+=pad}
+  const W=760,H=300,L=58,R=18,T=18,B=45,iw=W-L-R,ih=H-T-B;
+  const x=w=>L+(w/Math.max(1,p.planned_weeks))*iw;
+  const y=v=>T+((max-v)/(max-min))*ih;
+  let svg=`<svg class="chart-svg" viewBox="0 0 ${W} ${H}">`;
+  for(let i=0;i<=5;i++){const v=max-(max-min)*i/5,yy=T+ih*i/5;svg+=`<line class="chart-grid" x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}"/><text class="chart-label" x="${L-8}" y="${yy+4}" text-anchor="end">${v.toFixed(1)}</text>`}
+  if(goal!==null)svg+=`<line class="chart-goal" x1="${L}" y1="${y(Number(goal))}" x2="${W-R}" y2="${y(Number(goal))}"/>`;
+  const path=points.map(([w,v],i)=>`${i?'L':'M'} ${x(w).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  svg+=`<path class="${field==='weight_kg'?'chart-line':'chart-line-abdomen'}" d="${path}"/>`;
+  points.forEach(([w,v])=>svg+=`<circle class="${field==='weight_kg'?'chart-point':'chart-point-abdomen'}" cx="${x(w)}" cy="${y(v)}" r="5"><title>Semana ${w}: ${v.toFixed(2)} ${suffix}</title></circle>`);
+  svg+=`<text class="chart-label" x="${L+iw/2}" y="${H-4}" text-anchor="middle">Semanas</text><text class="chart-label" transform="translate(14 ${T+ih/2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text></svg>`;
+  return svg;
+}
+
+async function openDoctorPatient(patientId){
+  try{
+    const p=(await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(patientId)}&limit=1`))?.[0];
+    if(!p)throw new Error('No se encontró la ficha del paciente.');
+    const recs=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(patientId)}&order=measured_on.asc,created_at.asc`)||[];
+    const prescriptions=await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
+    const messages=await dbGet(`care_messages?select=*&patient_user_id=eq.${encodeURIComponent(patientId)}&doctor_user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.asc`)||[];
+    doctorPatientDetail={profile:p,records:recs,prescriptions,messages};
+    doctorPatientDetailView();
+  }catch(err){alert(err.message)}
+}
+
+function doctorPatientDetailView(){
+  const d=doctorPatientDetail;if(!d)return doctorView();
+  const p=d.profile,recs=d.records,latest=recs.at(-1);
+  const waist=[...recs].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined);
+  app.innerHTML=shell(`${header()}
+    <section class="card">
+      <button class="linkbtn" id="backPatients">← Mis pacientes</button>
+      <h2 class="section-title">${esc(p.full_name)}</h2><div class="muted">Seguimiento desde ${fmt(p.start_date)}</div>
+    </section>
+    <section class="metrics">
+      <div class="metric"><span>Peso inicial</span><strong>${kg(p.initial_weight_kg)}</strong></div>
+      <div class="metric"><span>Peso actual</span><strong>${latest?kg(latest.weight_kg):'—'}</strong></div>
+      <div class="metric"><span>Peso meta</span><strong>${p.target_weight_kg?kg(p.target_weight_kg):'—'}</strong></div>
+      <div class="metric"><span>Cintura actual</span><strong>${waist?cm(waist.abdominal_circumference_cm):'—'}</strong></div>
+    </section>
+    <section class="card"><h2 class="section-title">Evolución de peso</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'weight_kg',p.target_weight_kg?Number(p.target_weight_kg):null,'Peso (kg)','kg')}</div></section>
+    <section class="card"><h2 class="section-title">Circunferencia abdominal</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'abdominal_circumference_cm',null,'Circunferencia (cm)','cm')}</div></section>
+    <section class="card">
+      <h2 class="section-title">Indicación farmacológica</h2>
+      <div class="integration-note">La receta electrónica, firma y SNRE quedan pendientes. Esta versión permite crear y compartir la indicación dentro de PesoCare.</div>
+      <form id="doctorPrescriptionForm"><div class="grid">
+        <div><label>Medicamento</label><input id="rxMedication" required placeholder="Ej: Wegovy"></div>
+        <div><label>Principio activo</label><input id="rxIngredient" placeholder="Ej: semaglutida"></div>
+        <div><label>Dosis</label><input id="rxDose" required placeholder="Ej: 0,5 mg"></div>
+        <div><label>Frecuencia</label><input id="rxFrequency" required placeholder="Ej: 1 vez por semana"></div>
+        <div><label>Fecha inicio</label><input id="rxStart" type="date" value="${today()}"></div>
+        <div><label>Duración</label><input id="rxDuration" placeholder="Ej: 4 semanas"></div>
+      </div><label style="margin-top:10px">Indicaciones</label><textarea id="rxInstructions" rows="3"></textarea>
+      <button class="primary" type="submit" style="margin-top:12px">Guardar y compartir indicación</button></form>
+      ${d.prescriptions.length?`<div>${d.prescriptions.map(rx=>`
+        <div class="prescription-card"><strong>${esc(rx.medication_name)} · ${esc(rx.dose_text)}</strong>
+        <div>${esc(rx.frequency_text)}${rx.duration_text?` · ${esc(rx.duration_text)}`:''}</div>
+        <div class="small-muted">${rx.status} · receta legal pendiente</div></div>`).join('')}</div>`:''}
+    </section>
+    <section class="card">
+      <h2 class="section-title">Mensajes</h2>
+      <div class="message-thread" id="doctorMessageThread">${d.messages.length?d.messages.map(m=>`
+        <div class="message-bubble ${m.sender_user_id===currentUser.id?'mine':'theirs'}"><div>${esc(m.message)}</div><span>${formatDateTime(m.created_at)}</span></div>`).join(''):'<div class="empty-state">Aún no hay mensajes.</div>'}</div>
+      <form id="doctorMessageForm" class="message-form"><textarea id="doctorMessageText" rows="3" maxlength="4000" required placeholder="Escribe al paciente..."></textarea><button class="primary" type="submit">Enviar mensaje</button></form>
+    </section>
+    <section class="card"><h2 class="section-title">Historial</h2>
+      <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circunferencia</th></tr></thead>
+      <tbody>${recs.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOfFor(r.measured_on,p)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table></div>
+    </section>`);
+  bindCommonHeader();
+  document.getElementById('backPatients')?.addEventListener('click',()=>{doctorPatientDetail=null;doctorView()});
+  document.getElementById('doctorPrescriptionForm')?.addEventListener('submit',saveDoctorPrescription);
+  document.getElementById('doctorMessageForm')?.addEventListener('submit',sendDoctorMessage);
+}
+
+async function saveDoctorPrescription(e){
+  e.preventDefault();const p=doctorPatientDetail.profile;
+  try{
+    await dbInsert('prescription_drafts',{
+      doctor_user_id:currentUser.id,patient_user_id:p.user_id,
+      medication_name:document.getElementById('rxMedication').value.trim(),
+      active_ingredient:document.getElementById('rxIngredient').value.trim()||null,
+      dose_text:document.getElementById('rxDose').value.trim(),
+      frequency_text:document.getElementById('rxFrequency').value.trim(),
+      start_date:document.getElementById('rxStart').value||null,
+      duration_text:document.getElementById('rxDuration').value.trim()||null,
+      instructions:document.getElementById('rxInstructions').value.trim()||null,
+      status:'SHARED',legal_status:'PENDING_LEGAL_INTEGRATION'
+    });
+    await openDoctorPatient(p.user_id);
+  }catch(err){alert(err.message)}
+}
+
+async function sendDoctorMessage(e){
+  e.preventDefault();const p=doctorPatientDetail.profile;
+  const message=document.getElementById('doctorMessageText').value.trim();if(!message)return;
+  try{
+    await dbInsert('care_messages',{doctor_user_id:currentUser.id,patient_user_id:p.user_id,sender_user_id:currentUser.id,message});
+    await openDoctorPatient(p.user_id);
+  }catch(err){alert(err.message)}
+}
+
+async function loadAdminData(){
+  const [u,t]=await Promise.all([
+    invokeFunction('admin-console',{action:'list_users',page:1,per_page:200}),
+    invokeFunction('admin-console',{action:'list_tickets'})
+  ]);
+  adminUsers=u.users||[];adminTickets=t.tickets||[];adminLoaded=true;
+}
+
+function adminView(){
+  if(!adminLoaded){
+    app.innerHTML=shell(`${header()}<section class="card"><div class="loading">Cargando PesoCare Admin…</div></section>`);
+    bindCommonHeader();
+    loadAdminData().then(adminView).catch(err=>{
+      app.innerHTML=shell(`${header()}<section class="card"><div class="error">${esc(err.message)}</div></section>`);
+      bindCommonHeader();
+    });
+    return;
+  }
+  const total=adminUsers.length;
+  const patients=adminUsers.filter(u=>u.roles.includes('PATIENT')).length;
+  const doctors=adminUsers.filter(u=>u.roles.includes('DOCTOR')).length;
+  const suspended=adminUsers.filter(u=>u.status==='SUSPENDED').length;
+  app.innerHTML=shell(`${header()}
+    <section class="card admin-hero"><div><h2 class="section-title">PesoCare Admin</h2><div class="muted">Gestión de usuarios, accesos y soporte</div></div><span class="owner-chip">${account?.is_owner?'Owner':'Administrador'}</span></section>
+    <section class="metrics admin-metrics">
+      <div class="metric"><span>Usuarios</span><strong>${total}</strong></div>
+      <div class="metric"><span>Pacientes</span><strong>${patients}</strong></div>
+      <div class="metric"><span>Médicos</span><strong>${doctors}</strong></div>
+      <div class="metric"><span>Suspendidos</span><strong>${suspended}</strong></div>
+    </section>
+    <section class="card"><h2 class="section-title">Agregar usuario</h2>
+      <form id="adminInviteForm"><div class="grid">
+        <div><label>Nombre</label><input id="adminInviteName" required></div>
+        <div><label>Correo</label><input id="adminInviteEmail" type="email" required></div>
+        <div><label>Rol principal</label><select id="adminInviteRole"><option value="PATIENT">Paciente</option><option value="DOCTOR">Médico</option>${account?.is_owner?'<option value="ADMIN">Administrador</option>':''}</select></div>
+      </div><button class="primary" type="submit" style="margin-top:12px">Enviar invitación</button><p id="adminInviteMsg" class="error"></p></form>
+    </section>
+    <section class="card">
+      <div class="card-head"><div><h2 class="section-title">Usuarios</h2><div class="muted">Modificar cuentas, roles y accesos</div></div><button id="refreshAdmin" class="secondary small-btn">Actualizar</button></div>
+      <input id="adminSearch" placeholder="Buscar por nombre o correo"><div id="adminUserList" class="admin-user-list"></div>
+    </section>
+    <section class="card"><h2 class="section-title">Tickets de soporte</h2>
+      ${adminTickets.length?adminTickets.map(t=>`
+        <div class="support-admin-row"><div><strong>${esc(t.subject)}</strong>
+        <div class="muted">${esc(t.user?.display_name||t.user?.email_snapshot||'Usuario')} · ${formatDateTime(t.created_at)}</div>
+        <div>${esc(t.description)}</div></div>
+        <select data-ticket-status="${t.id}">${['NEW','IN_PROGRESS','RESOLVED'].map(s=>`<option value="${s}" ${t.status===s?'selected':''}>${s}</option>`).join('')}</select></div>`).join('')
+        :'<div class="empty-state">No hay tickets.</div>'}
+    </section>`);
+  bindCommonHeader();bindAdminEvents();renderAdminUsers();
+}
+
+function renderAdminUsers(){
+  const el=document.getElementById('adminUserList');if(!el)return;
+  const q=(document.getElementById('adminSearch')?.value||'').trim().toLowerCase();
+  const list=adminUsers.filter(u=>!q||String(u.display_name||'').toLowerCase().includes(q)||String(u.email||'').toLowerCase().includes(q));
+  el.innerHTML=list.map(u=>`
+    <div class="admin-user-card"><div class="admin-user-main"><strong>${esc(u.display_name||u.email||'Usuario')}</strong>
+    <div class="muted">${esc(u.email||'')}</div><div class="badge-row">${u.roles.map(roleBadge).join('')} <span class="status-chip status-${u.status.toLowerCase()}">${u.status}</span> ${u.is_owner?'<span class="owner-chip">Owner</span>':''}</div>
+    <div class="small-muted">Último acceso: ${formatDateTime(u.last_sign_in_at)}</div></div>
+    <div class="admin-actions"><button class="secondary small-btn" data-admin-edit="${u.id}">Editar</button>
+    <button class="secondary small-btn" data-admin-reset="${u.id}">Reset clave</button>
+    ${!u.is_owner?`<button class="secondary small-btn" data-admin-status="${u.id}">${u.status==='ACTIVE'?'Suspender':'Reactivar'}</button><button class="danger-btn small-btn" data-admin-delete="${u.id}">Eliminar</button>`:''}</div></div>`).join('')||'<div class="empty-state">Sin resultados.</div>';
+  bindAdminUserButtons();
+}
+
+function bindAdminEvents(){
+  document.getElementById('adminSearch')?.addEventListener('input',renderAdminUsers);
+  document.getElementById('refreshAdmin')?.addEventListener('click',()=>{adminLoaded=false;adminView()});
+  document.getElementById('adminInviteForm')?.addEventListener('submit',adminInviteUser);
+  document.querySelectorAll('[data-ticket-status]').forEach(sel=>sel.addEventListener('change',async()=>{
+    try{await invokeFunction('admin-console',{action:'update_ticket',ticket_id:sel.dataset.ticketStatus,status:sel.value});adminLoaded=false;adminView()}
+    catch(err){alert(err.message)}
+  }));
+}
+function bindAdminUserButtons(){
+  document.querySelectorAll('[data-admin-edit]').forEach(b=>b.addEventListener('click',()=>adminEditUser(b.dataset.adminEdit)));
+  document.querySelectorAll('[data-admin-reset]').forEach(b=>b.addEventListener('click',()=>adminResetPassword(b.dataset.adminReset)));
+  document.querySelectorAll('[data-admin-status]').forEach(b=>b.addEventListener('click',()=>adminToggleStatus(b.dataset.adminStatus)));
+  document.querySelectorAll('[data-admin-delete]').forEach(b=>b.addEventListener('click',()=>adminDeleteUser(b.dataset.adminDelete)));
+}
+
+async function adminInviteUser(e){
+  e.preventDefault();
+  const role=document.getElementById('adminInviteRole').value;
+  const inviteRoles=role==='PATIENT'?['PATIENT']:role==='DOCTOR'?['PATIENT','DOCTOR']:['PATIENT','ADMIN'];
+  const msg=document.getElementById('adminInviteMsg');msg.textContent='';
+  try{
+    await invokeFunction('admin-console',{action:'invite_user',email:document.getElementById('adminInviteEmail').value.trim(),display_name:document.getElementById('adminInviteName').value.trim(),roles:inviteRoles});
+    msg.className='notice success';msg.textContent='Invitación enviada.';adminLoaded=false;setTimeout(adminView,400);
+  }catch(err){msg.textContent=err.message}
+}
+async function adminEditUser(id){
+  const u=adminUsers.find(x=>x.id===id);if(!u)return;
+  const name=prompt('Nombre:',u.display_name||'');if(name===null)return;
+  const email=prompt('Correo:',u.email||'');if(email===null)return;
+  const rt=prompt('Roles separados por coma: PATIENT, DOCTOR, ADMIN',u.roles.join(', '));if(rt===null)return;
+  const nextRoles=rt.split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
+  try{await invokeFunction('admin-console',{action:'update_user',user_id:id,display_name:name,email,roles:nextRoles});adminLoaded=false;adminView()}
+  catch(err){alert(err.message)}
+}
+async function adminResetPassword(id){
+  const u=adminUsers.find(x=>x.id===id);if(!u||!confirm(`¿Enviar reset de contraseña a ${u.email}?`))return;
+  try{await invokeFunction('admin-console',{action:'send_password_reset',user_id:id});alert('Correo de restablecimiento enviado.')}
+  catch(err){alert(err.message)}
+}
+async function adminToggleStatus(id){
+  const u=adminUsers.find(x=>x.id===id);if(!u)return;
+  const next=u.status==='ACTIVE'?'SUSPENDED':'ACTIVE';
+  if(!confirm(`${next==='SUSPENDED'?'Suspender':'Reactivar'} a ${u.display_name||u.email}?`))return;
+  try{await invokeFunction('admin-console',{action:'update_user',user_id:id,status:next});adminLoaded=false;adminView()}
+  catch(err){alert(err.message)}
+}
+async function adminDeleteUser(id){
+  const u=adminUsers.find(x=>x.id===id);if(!u)return;
+  if(!confirm(`Eliminar definitivamente a ${u.display_name||u.email} y sus datos asociados?`))return;
+  if(prompt('Escribe ELIMINAR para confirmar:')!=='ELIMINAR')return;
+  try{await invokeFunction('admin-console',{action:'delete_user',user_id:id});adminLoaded=false;adminView()}
+  catch(err){alert(err.message)}
+}
+
 async function addWeight(e){
   e.preventDefault();
   const measured_on=document.getElementById('date').value;
@@ -876,7 +1433,7 @@ async function editPlan(){
 
 async function logout(){
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];doctorProfile=null;doctorPatients=[];doctorPatientDetail=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){

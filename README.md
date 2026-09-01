@@ -96,3 +96,13 @@ https://lsueyras.github.io/pesocare/
 - El borde y tamaño visible ya no dependen del render nativo del input de fecha de Safari.
 - Los tres controles tienen exactamente el mismo ancho y altura.
 - Se mantiene el selector nativo de fecha.
+
+## V13 — Paciente + Médico + Admin
+- Roles múltiples PATIENT / DOCTOR / ADMIN.
+- PesoCare Pro para médicos.
+- Vinculación paciente-médico por correo.
+- Mensajería paciente-médico.
+- Indicaciones farmacológicas compartidas por paciente.
+- PesoCare Admin con gestión de usuarios, roles, suspensión, reset, eliminación e invitaciones.
+- Tickets de soporte dentro de la app.
+- RNPI y receta electrónica legal quedan desacoplados y pendientes, sin bloquear operación.
