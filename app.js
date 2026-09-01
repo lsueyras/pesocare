@@ -500,9 +500,24 @@ function dashboardView(){
       <h2 class="section-title">Registrar peso</h2>
       <p class="muted">La fecha de hoy viene propuesta. Puedes cambiarla para registrar un dato anterior.</p>
       <form id="weightForm"><div class="record-grid">
-        <div><label>Fecha</label><input id="date" type="date" value="${today()}" required></div>
-        <div><label>Peso (kg)</label><input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 94,85" required></div>
-        <div><label>Circunferencia abdominal (cm)</label><input id="abdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 111,50" required></div>
+        <div class="record-field">
+          <label for="date">Fecha</label>
+          <div class="control-frame">
+            <input id="date" type="date" value="${today()}" required>
+          </div>
+        </div>
+        <div class="record-field">
+          <label for="weight">Peso (kg)</label>
+          <div class="control-frame">
+            <input id="weight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 94,85" required>
+          </div>
+        </div>
+        <div class="record-field">
+          <label for="abdomen">Circunferencia abdominal (cm)</label>
+          <div class="control-frame">
+            <input id="abdomen" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 111,50" required>
+          </div>
+        </div>
       </div><button class="primary" style="margin-top:12px">Guardar registro</button><p id="weightMsg" class="error"></p></form>
     </section>
     <section class="card">

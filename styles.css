@@ -152,3 +152,86 @@ button:disabled{
   min-height:0;
   margin-top:14px;
 }
+
+/* V11 — contenedores visuales iguales para Fecha, Peso y Circunferencia */
+.record-grid{
+  width:100%;
+}
+
+.record-field{
+  width:100%;
+  min-width:0;
+  overflow:hidden;
+}
+
+.record-field label{
+  width:100%;
+}
+
+.control-frame{
+  display:flex;
+  align-items:center;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  height:50px;
+  overflow:hidden;
+  border:1px solid #d0d5dd;
+  border-radius:12px;
+  background:#fff;
+  box-sizing:border-box;
+}
+
+.control-frame:focus-within{
+  border-color:#175cd3;
+  box-shadow:0 0 0 3px rgba(23,92,211,.15);
+}
+
+.control-frame input,
+.control-frame input[type="date"],
+.control-frame input[type="text"]{
+  display:block;
+  flex:1 1 0%;
+  width:1px !important;
+  min-width:0 !important;
+  max-width:100% !important;
+  height:48px;
+  min-height:48px;
+  margin:0;
+  padding:10px 12px;
+  border:0 !important;
+  border-radius:0;
+  outline:0 !important;
+  box-shadow:none !important;
+  background:transparent;
+  box-sizing:border-box;
+  font-size:16px;
+}
+
+.control-frame input[type="date"]{
+  -webkit-appearance:none;
+  appearance:none;
+}
+
+.control-frame input[type="date"]::-webkit-date-and-time-value{
+  width:100%;
+  min-width:0;
+  text-align:left;
+}
+
+.control-frame input[type="date"]::-webkit-calendar-picker-indicator{
+  flex:0 0 auto;
+  margin:0 0 0 8px;
+}
+
+/* En iPhone todos los controles ocupan exactamente el ancho del contenedor */
+@media(max-width:860px){
+  .record-grid{
+    grid-template-columns:minmax(0,1fr);
+  }
+  .record-field,
+  .control-frame{
+    width:100%;
+    max-width:100%;
+  }
+}

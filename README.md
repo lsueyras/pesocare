@@ -89,3 +89,10 @@ https://lsueyras.github.io/pesocare/
 - No bloquea `Ingresar`.
 - Recuerda revisar Bandeja de entrada y Spam.
 - Mejora también el mensaje de recuperación de contraseña.
+
+
+## V11 — Igualación definitiva de ancho de campos en iPhone
+- Fecha, Peso y Circunferencia usan un contenedor visual común `control-frame`.
+- El borde y tamaño visible ya no dependen del render nativo del input de fecha de Safari.
+- Los tres controles tienen exactamente el mismo ancho y altura.
+- Se mantiene el selector nativo de fecha.
