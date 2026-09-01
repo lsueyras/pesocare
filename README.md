@@ -345,3 +345,21 @@ https://lsueyras.github.io/pesocare/
 - La creación vuelve a comprobar disponibilidad bajo bloqueo transaccional.
 - Controles cancelados desaparecen de la agenda visible, liberan el espacio y permanecen en BD para auditoría.
 - RPC nueva: bodycare_check_control_slot.
+
+
+## BodyCare V16 — Priorización de seguimiento
+- Dashboard médico con semáforo:
+  - rojo: requiere atención;
+  - naranja: revisar;
+  - verde: seguimiento normal.
+- Pacientes ordenados automáticamente por prioridad.
+- Criterios configurables por médico:
+  - días sin registro;
+  - aumento porcentual de peso;
+  - disminución rápida de peso en hasta 7 días;
+  - aumento de circunferencia abdominal.
+- Alertas persistentes por nuevo registro de peso.
+- Alertas por falta de registros se calculan dinámicamente.
+- El médico puede marcar alertas persistentes como revisadas.
+- Push + Realtime de `CLINICAL_ALERT`.
+- Ninguna bandera constituye diagnóstico ni reemplaza juicio clínico.

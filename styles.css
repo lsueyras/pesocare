@@ -1050,3 +1050,139 @@ input[data-date-cl].date-invalid{
     width:100%;
   }
 }
+
+/* BodyCare V16 — priorización clínica-operacional */
+.priority-summary{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+  margin-bottom:14px;
+}
+.priority-summary-card{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  padding:14px;
+  border-radius:14px;
+  border:1px solid #eaecf0;
+  background:#fff;
+}
+.priority-summary-card span{font-size:.8rem;font-weight:700}
+.priority-summary-card strong{font-size:1.65rem}
+.priority-summary-card.red{border-color:#fecdca;background:#fef3f2;color:#b42318}
+.priority-summary-card.orange{border-color:#fedf89;background:#fffaeb;color:#b54708}
+.priority-summary-card.green{border-color:#abefc6;background:#ecfdf3;color:#027a48}
+
+.priority-patient-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:13px 0;
+  border-bottom:1px solid #eaecf0;
+}
+.priority-patient-row:last-child{border-bottom:0}
+.priority-patient-main{min-width:0;flex:1}
+.priority-patient-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.priority-patient-meta{margin-top:4px;color:#667085;font-size:.76rem}
+.priority-reasons-mini{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.priority-reasons-mini span{
+  padding:3px 7px;border-radius:999px;background:#f2f4f7;color:#475467;font-size:.68rem;
+}
+
+.priority-chip{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:.7rem;
+  font-weight:800;
+}
+.priority-chip.red{background:#fee4e2;color:#b42318}
+.priority-chip.orange{background:#fef0c7;color:#b54708}
+.priority-chip.green{background:#d1fadf;color:#027a48}
+.priority-chip.large{font-size:.78rem;padding:5px 10px}
+
+.clinical-disclaimer{
+  display:inline-flex;
+  padding:4px 8px;
+  border-radius:999px;
+  background:#f2f4f7;
+  color:#667085;
+  font-size:.68rem;
+  font-weight:700;
+}
+.clinical-priority-card.red{border-left:4px solid #d92d20}
+.clinical-priority-card.orange{border-left:4px solid #f79009}
+.clinical-priority-card.green{border-left:4px solid #12b76a}
+.clinical-reasons{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.clinical-reason{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 11px;
+  border-radius:11px;
+}
+.clinical-reason>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.clinical-reason strong{font-size:.8rem}
+.clinical-reason span{font-size:.75rem;line-height:1.35}
+.clinical-reason.red{background:#fef3f2;color:#912018}
+.clinical-reason.orange{background:#fffaeb;color:#93370d}
+.clinical-normal{
+  margin-top:10px;
+  padding:10px 11px;
+  border-radius:11px;
+  background:#ecfdf3;
+  color:#027a48;
+  font-size:.8rem;
+  font-weight:650;
+}
+
+.clinical-settings-grid{align-items:end}
+.suffix-input{
+  display:flex;
+  align-items:center;
+  width:100%;
+  border:1px solid #d0d5dd;
+  border-radius:12px;
+  overflow:hidden;
+  background:#fff;
+}
+.suffix-input:focus-within{
+  border-color:#175cd3;
+  box-shadow:0 0 0 3px rgba(23,92,211,.12);
+}
+.suffix-input input{
+  flex:1 1 auto;
+  min-width:0;
+  border:0 !important;
+  box-shadow:none !important;
+  outline:0 !important;
+  border-radius:0 !important;
+}
+.suffix-input span{
+  flex:0 0 auto;
+  padding:0 11px;
+  color:#667085;
+  font-size:.72rem;
+  font-weight:700;
+}
+.clinical-settings-note{
+  margin-top:10px;
+  padding:9px 10px;
+  border-radius:10px;
+  background:#f9fafb;
+  color:#667085;
+  font-size:.74rem;
+}
+
+@media(max-width:650px){
+  .priority-summary{grid-template-columns:1fr}
+  .priority-patient-row{align-items:flex-start;flex-direction:column}
+  .priority-patient-row>button{width:100%}
+  .clinical-reason{align-items:stretch;flex-direction:column}
+  .clinical-reason button{width:100%}
+}

@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='15.5';
+const APP_VERSION='16.0';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -18,6 +18,7 @@ let session=null, currentUser=null, profile=null, records=[];
 let account=null, roles=[], activePortal='PATIENT';
 let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], patientControls=[], supportTickets=[];
 let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
+let doctorPriorities=[], doctorAlertSettings=null;
 let adminUsers=[], adminTickets=[], adminLoaded=false;
 let editingPrescriptionId=null;
 let notifications=[];
@@ -1234,7 +1235,8 @@ function notificationIcon(type){
     SUPPORT:'🛠️',
     PUSH_TEST:'🔔',
     NEW_CONTROL:'🗓️',
-    CONTROL_CANCELLED:'🚫'
+    CONTROL_CANCELLED:'🚫',
+    CLINICAL_ALERT:'🔴'
   };
   return icons[type]||'🔔';
 }
@@ -1326,7 +1328,8 @@ function notificationDestinationLabel(n){
     SUPPORT:'Abrir soporte',
     PUSH_TEST:'Abrir BodyCare',
     NEW_CONTROL:'Ver control',
-    CONTROL_CANCELLED:'Ver controles'
+    CONTROL_CANCELLED:'Ver controles',
+    CLINICAL_ALERT:'Revisar paciente'
   };
   return map[n.type]||'Abrir';
 }
@@ -1453,6 +1456,19 @@ async function openNotificationById(id){
       setTimeout(()=>document.getElementById('patientControlsSection')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
       return;
     }
+  }
+
+  if(n.type==='CLINICAL_ALERT'&&hasRole('DOCTOR')){
+    activePortal='DOCTOR';
+    localStorage.setItem('pesocare_active_portal','DOCTOR');
+    if(n.related_user_id){
+      await openDoctorPatient(n.related_user_id);
+      setTimeout(()=>document.getElementById('doctorClinicalPrioritySection')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
+    }else{
+      doctorPatientDetail=null;
+      await loadData();render();
+    }
+    return;
   }
 
   if((n.type==='NEW_WEIGHT'||n.type==='NEW_PATIENT') && hasRole('DOCTOR')){
@@ -1643,6 +1659,15 @@ async function handleRealtimeNotification(n,fromFallback=false){
       }
       if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id===n.related_user_id){
         await syncDoctorControls(n.related_user_id);
+      }
+    }
+
+    if(n.type==='CLINICAL_ALERT'&&hasRole('DOCTOR')){
+      await syncDoctorPriorities(false);
+      if(doctorPatientDetail?.profile?.user_id===n.related_user_id){
+        renderDoctorAlertPanel();
+      }else if(activePortal==='DOCTOR'&&!doctorPatientDetail&&!userIsTyping()){
+        renderDoctorPriorityDashboard();
       }
     }
 
@@ -1914,7 +1939,7 @@ async function loadData(){
 
   profile=null;records=[];careLinks=[];linkedDoctorProfiles=[];
   patientPrescriptions=[];patientMessages=[];supportTickets=[];
-  doctorProfile=null;doctorPatients=[];
+  doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;
 
   if(account?.status!=='ACTIVE')return;
 
@@ -1943,6 +1968,15 @@ async function loadData(){
       const ids=links.map(l=>l.patient_user_id).join(',');
       const patientProfiles=await dbGet(`profiles?select=*&user_id=in.(${ids})`)||[];
       doctorPatients=links.map(l=>({link:l,profile:patientProfiles.find(p=>p.user_id===l.patient_user_id)||null}));
+    }
+    try{
+      doctorPriorities=await dbRpc('bodycare_get_doctor_priorities',{})||[];
+      const settings=await dbRpc('bodycare_get_alert_settings',{});
+      doctorAlertSettings=Array.isArray(settings)?settings[0]||null:settings;
+    }catch(err){
+      console.warn('Doctor priority data unavailable',err);
+      doctorPriorities=[];
+      doctorAlertSettings=null;
     }
   }
 }
@@ -3180,7 +3214,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v15.5'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -3533,6 +3567,187 @@ async function sendPatientMessage(e){
   }
 }
 
+
+function priorityRank(value){
+  return value==='RED'?1:value==='ORANGE'?2:3;
+}
+
+function priorityLabel(value){
+  return value==='RED'?'Requiere atención':value==='ORANGE'?'Revisar':'Seguimiento normal';
+}
+
+function priorityForPatient(patientId){
+  return doctorPriorities.find(x=>x.patient_user_id===patientId)||{
+    patient_user_id:patientId,
+    priority:'GREEN',
+    open_alerts:0,
+    days_since_record:null,
+    latest_weight:null,
+    latest_record_date:null,
+    reasons:[]
+  };
+}
+
+function priorityReasonMarkup(reason,includeAction=false){
+  if(!reason)return '';
+  const severity=reason.severity||'ORANGE';
+  return `<div class="clinical-reason ${severity.toLowerCase()}">
+    <div>
+      <strong>${esc(reason.title||'Criterio de seguimiento')}</strong>
+      <span>${esc(reason.detail||'')}</span>
+    </div>
+    ${includeAction&&reason.id?`<button type="button" class="secondary small-btn" data-review-alert="${esc(reason.id)}">Marcar revisada</button>`:''}
+  </div>`;
+}
+
+function doctorPriorityCounts(){
+  return doctorPriorities.reduce((acc,p)=>{
+    if(p.priority==='RED')acc.red++;
+    else if(p.priority==='ORANGE')acc.orange++;
+    else acc.green++;
+    return acc;
+  },{red:0,orange:0,green:0});
+}
+
+function doctorPriorityPatientsMarkup(){
+  const rows=[...doctorPriorities].sort((a,b)=>{
+    const r=priorityRank(a.priority)-priorityRank(b.priority);
+    if(r)return r;
+    return String(a.patient_name||'').localeCompare(String(b.patient_name||''),'es');
+  });
+
+  if(!rows.length)return '<div class="empty-state">Aún no tienes pacientes vinculados.</div>';
+
+  return rows.map(p=>{
+    const patient=doctorPatients.find(x=>x.link.patient_user_id===p.patient_user_id);
+    const reasons=Array.isArray(p.reasons)?p.reasons:[];
+    return `<div class="priority-patient-row ${String(p.priority).toLowerCase()}">
+      <div class="priority-patient-main">
+        <div class="priority-patient-head">
+          <strong>${esc(p.patient_name||patient?.profile?.full_name||'Paciente')}</strong>
+          <span class="priority-chip ${String(p.priority).toLowerCase()}">${priorityLabel(p.priority)}</span>
+        </div>
+        <div class="priority-patient-meta">
+          ${p.latest_record_date?`Último registro ${fmt(p.latest_record_date)}`:'Sin registro'}
+          ${p.latest_weight!==null&&p.latest_weight!==undefined?` · ${kg(p.latest_weight)}`:''}
+          ${Number(p.open_alerts||0)>0?` · ${Number(p.open_alerts)} alerta${Number(p.open_alerts)===1?'':'s'} abierta${Number(p.open_alerts)===1?'':'s'}`:''}
+        </div>
+        ${reasons.length?`<div class="priority-reasons-mini">${reasons.slice(0,2).map(r=>`<span>${esc(r.title||'Revisar seguimiento')}</span>`).join('')}</div>`:''}
+      </div>
+      <button class="primary small-btn" data-open-patient="${p.patient_user_id}">Abrir seguimiento</button>
+    </div>`;
+  }).join('');
+}
+
+function renderDoctorPriorityDashboard(){
+  const counts=doctorPriorityCounts();
+  const red=document.getElementById('priorityRedCount');
+  const orange=document.getElementById('priorityOrangeCount');
+  const green=document.getElementById('priorityGreenCount');
+  if(red)red.textContent=counts.red;
+  if(orange)orange.textContent=counts.orange;
+  if(green)green.textContent=counts.green;
+
+  const list=document.getElementById('doctorPriorityPatientList');
+  if(list){
+    list.innerHTML=doctorPriorityPatientsMarkup();
+    list.querySelectorAll('[data-open-patient]').forEach(btn=>btn.addEventListener('click',()=>openDoctorPatient(btn.dataset.openPatient)));
+  }
+}
+
+async function syncDoctorPriorities(renderUI=true){
+  if(!hasRole('DOCTOR'))return;
+  try{
+    doctorPriorities=await dbRpc('bodycare_get_doctor_priorities',{})||[];
+    if(renderUI){
+      if(doctorPatientDetail)renderDoctorAlertPanel();
+      else renderDoctorPriorityDashboard();
+    }
+  }catch(err){
+    console.warn('Priority sync failed',err);
+  }
+}
+
+function alertSettingsValues(){
+  return doctorAlertSettings||{
+    no_record_days:7,
+    weight_gain_pct:2,
+    rapid_loss_pct:3,
+    abdominal_increase_cm:5
+  };
+}
+
+async function saveDoctorAlertSettings(e){
+  e.preventDefault();
+  const noRecord=Number(document.getElementById('alertNoRecordDays')?.value);
+  const gain=Number(document.getElementById('alertWeightGainPct')?.value);
+  const loss=Number(document.getElementById('alertRapidLossPct')?.value);
+  const abdomen=Number(document.getElementById('alertAbdominalIncrease')?.value);
+
+  try{
+    const rows=await dbRpc('bodycare_save_alert_settings',{
+      p_no_record_days:noRecord,
+      p_weight_gain_pct:gain,
+      p_rapid_loss_pct:loss,
+      p_abdominal_increase_cm:abdomen
+    });
+    doctorAlertSettings=Array.isArray(rows)?rows[0]:rows;
+    await syncDoctorPriorities(true);
+    showToast('Criterios actualizados','BodyCare aplicará estos umbrales a los nuevos registros.','CLINICAL_ALERT');
+  }catch(err){
+    alert('No fue posible guardar los criterios de seguimiento: '+err.message);
+  }
+}
+
+function doctorAlertPanelMarkup(){
+  if(!doctorPatientDetail)return '';
+  const patientId=doctorPatientDetail.profile.user_id;
+  const p=priorityForPatient(patientId);
+  const reasons=Array.isArray(p.reasons)?p.reasons:[];
+  return `<section class="card clinical-priority-card ${String(p.priority).toLowerCase()}" id="doctorClinicalPrioritySection">
+    <div class="card-head">
+      <div>
+        <h2 class="section-title">Prioridad de seguimiento</h2>
+        <div class="muted">Banderas operacionales configurables. No constituyen diagnóstico ni reemplazan el juicio clínico.</div>
+      </div>
+      <span class="priority-chip large ${String(p.priority).toLowerCase()}">${priorityLabel(p.priority)}</span>
+    </div>
+    ${reasons.length
+      ? `<div class="clinical-reasons">${reasons.map(r=>priorityReasonMarkup(r,true)).join('')}</div>`
+      : '<div class="clinical-normal">Sin criterios de alerta abiertos con los umbrales actuales.</div>'}
+  </section>`;
+}
+
+function bindDoctorAlertPanel(){
+  document.querySelectorAll('[data-review-alert]').forEach(btn=>{
+    btn.addEventListener('click',()=>reviewDoctorAlert(btn.dataset.reviewAlert));
+  });
+}
+
+function renderDoctorAlertPanel(){
+  const old=document.getElementById('doctorClinicalPrioritySection');
+  if(!old||!doctorPatientDetail)return;
+  const temp=document.createElement('div');
+  temp.innerHTML=doctorAlertPanelMarkup().trim();
+  const fresh=temp.firstElementChild;
+  if(fresh){
+    old.replaceWith(fresh);
+    bindDoctorAlertPanel();
+  }
+}
+
+async function reviewDoctorAlert(id){
+  if(!id)return;
+  try{
+    await dbRpc('bodycare_review_alert',{p_alert_id:id});
+    await syncDoctorPriorities(false);
+    renderDoctorAlertPanel();
+    showToast('Alerta revisada','La alerta quedó registrada como revisada.','CLINICAL_ALERT');
+  }catch(err){
+    alert('No fue posible marcar la alerta como revisada: '+err.message);
+  }
+}
+
 async function saveDoctorProfile(e){
   e.preventDefault();
   const payload={
@@ -3558,14 +3773,18 @@ async function saveDoctorProfile(e){
 }
 
 function doctorView(){
+  const counts=doctorPriorityCounts();
+  const settings=alertSettingsValues();
+
   app.innerHTML=shell(`${header()}
     <section class="card">
       <div class="card-head">
-        <div><h2 class="section-title">BodyCare Pro</h2><div class="muted">Seguimiento de pacientes vinculados</div></div>
+        <div><h2 class="section-title">BodyCare Pro</h2><div class="muted">Seguimiento priorizado de pacientes vinculados</div></div>
         <span class="integration-badge">RNPI pendiente</span>
       </div>
       <div class="integration-note">La validación automática del registro profesional queda pendiente de integración y no bloquea esta versión.</div>
     </section>
+
     ${!doctorProfile?`
       <section class="card">
         <h2 class="section-title">Completa tu perfil profesional</h2>
@@ -3585,6 +3804,7 @@ function doctorView(){
           <div class="muted">${esc(doctorProfile.specialty||'Sin especialidad')}${doctorProfile.clinic_name?` · ${esc(doctorProfile.clinic_name)}`:''}</div>
           <div class="doctor-slot-summary">Agenda: controles de ${validControlSlotMinutes(doctorProfile.control_slot_minutes||30)} minutos</div>
         </div><button id="editDoctorProfile" class="secondary small-btn">Editar perfil</button></div>
+
         <div class="doctor-schedule-setting">
           <div><label for="doctorSlotMinutesSetting">Duración de cada control</label><div class="muted">Define el bloque que BodyCare reservará en tu agenda.</div></div>
           <select id="doctorSlotMinutesSetting">
@@ -3593,17 +3813,60 @@ function doctorView(){
           <button type="button" id="saveDoctorSlotMinutes" class="secondary small-btn">Guardar agenda</button>
         </div>
       </section>
+
+      <section class="priority-summary">
+        <div class="priority-summary-card red"><span>Requiere atención</span><strong id="priorityRedCount">${counts.red}</strong></div>
+        <div class="priority-summary-card orange"><span>Revisar</span><strong id="priorityOrangeCount">${counts.orange}</strong></div>
+        <div class="priority-summary-card green"><span>Seguimiento normal</span><strong id="priorityGreenCount">${counts.green}</strong></div>
+      </section>
+
       <section class="card">
-        <h2 class="section-title">Mis pacientes</h2>
-        ${doctorPatients.length?doctorPatients.map(x=>`
-          <div class="patient-row"><div><strong>${esc(x.profile?.full_name||'Paciente')}</strong>
-          <div class="muted">${x.profile?`Inicio ${fmt(x.profile.start_date)} · ${x.profile.planned_weeks} semanas`:'Ficha pendiente'}</div>
-          </div><button class="primary small-btn" data-open-patient="${x.link.patient_user_id}">Abrir seguimiento</button></div>`).join('')
-          :'<div class="empty-state">Aún no tienes pacientes vinculados. El paciente debe autorizarte usando tu correo.</div>'}
+        <div class="card-head">
+          <div>
+            <h2 class="section-title">Priorización de pacientes</h2>
+            <div class="muted">Ordenado por criterios de seguimiento pendientes y antigüedad del último registro.</div>
+          </div>
+          <span class="clinical-disclaimer">Apoyo al seguimiento · no diagnóstico</span>
+        </div>
+        <div id="doctorPriorityPatientList">${doctorPriorityPatientsMarkup()}</div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="section-title">Criterios de seguimiento</h2>
+            <div class="muted">Configura cuándo BodyCare debe levantar una bandera para revisión.</div>
+          </div>
+        </div>
+        <form id="doctorAlertSettingsForm">
+          <div class="grid clinical-settings-grid">
+            <div>
+              <label for="alertNoRecordDays">Sin registro por</label>
+              <div class="suffix-input"><input id="alertNoRecordDays" type="number" min="3" max="30" step="1" value="${Number(settings.no_record_days||7)}"><span>días</span></div>
+            </div>
+            <div>
+              <label for="alertWeightGainPct">Aumento de peso</label>
+              <div class="suffix-input"><input id="alertWeightGainPct" type="number" min="0.5" max="10" step="0.1" value="${Number(settings.weight_gain_pct||2)}"><span>%</span></div>
+            </div>
+            <div>
+              <label for="alertRapidLossPct">Disminución rápida</label>
+              <div class="suffix-input"><input id="alertRapidLossPct" type="number" min="1" max="15" step="0.1" value="${Number(settings.rapid_loss_pct||3)}"><span>% / 7 días</span></div>
+            </div>
+            <div>
+              <label for="alertAbdominalIncrease">Aumento de cintura</label>
+              <div class="suffix-input"><input id="alertAbdominalIncrease" type="number" min="1" max="20" step="0.5" value="${Number(settings.abdominal_increase_cm||5)}"><span>cm</span></div>
+            </div>
+          </div>
+          <div class="clinical-settings-note">Estos criterios organizan la revisión de pacientes y no representan por sí mismos una conclusión clínica.</div>
+          <button class="secondary" type="submit" style="margin-top:12px">Guardar criterios</button>
+        </form>
       </section>`}
   `);
+
   bindCommonHeader();
   document.getElementById('doctorProfileForm')?.addEventListener('submit',saveDoctorProfile);
+  document.getElementById('doctorAlertSettingsForm')?.addEventListener('submit',saveDoctorAlertSettings);
+
   document.getElementById('saveDoctorSlotMinutes')?.addEventListener('click',async()=>{
     const minutes=validControlSlotMinutes(document.getElementById('doctorSlotMinutesSetting')?.value||30);
     try{
@@ -3627,6 +3890,7 @@ function doctorView(){
       display_name:name.trim(),specialty:specialty.trim(),clinic_name:clinic.trim()||null,updated_at:new Date().toISOString()
     }).then(()=>loadData()).then(render).catch(err=>alert(err.message));
   });
+
   document.querySelectorAll('[data-open-patient]').forEach(btn=>btn.addEventListener('click',()=>openDoctorPatient(btn.dataset.openPatient)));
 }
 
@@ -3658,6 +3922,7 @@ function buildStandaloneChart(rows,p,field,goal=null,yLabel='',suffix=''){
 
 async function openDoctorPatient(patientId){
   try{
+    try{doctorPriorities=await dbRpc('bodycare_get_doctor_priorities',{})||[]}catch{}
     const p=(await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(patientId)}&limit=1`))?.[0];
     if(!p)throw new Error('No se encontró la ficha del paciente.');
     const recs=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(patientId)}&order=measured_on.asc,created_at.asc`)||[];
@@ -3675,7 +3940,7 @@ async function openDoctorPatient(patientId){
     })||[]);
     doctorPatientDetail={profile:p,records:recs,prescriptions,messages,controls};
     const matching=notifications.filter(n=>!n.read_at&&[
-      'NEW_MESSAGE','NEW_CONTROL','CONTROL_CANCELLED'
+      'NEW_MESSAGE','NEW_CONTROL','CONTROL_CANCELLED','CLINICAL_ALERT'
     ].includes(n.type)&&n.related_user_id===patientId);
     for(const n of matching)markNotificationRead(n.id);
     doctorPatientDetailView();
@@ -3739,6 +4004,7 @@ function doctorPatientDetailView(){
       <button class="linkbtn" id="backPatients">← Mis pacientes</button>
       <h2 class="section-title">${esc(p.full_name)}</h2><div class="muted">Seguimiento desde ${fmt(p.start_date)}</div>
     </section>
+    ${doctorAlertPanelMarkup()}
     <section class="metrics">
       <div class="metric"><span>Peso inicial</span><strong>${kg(p.initial_weight_kg)}</strong></div>
       <div class="metric"><span>Peso actual</span><strong>${latest?kg(latest.weight_kg):'—'}</strong></div>
@@ -3795,6 +4061,7 @@ function doctorPatientDetailView(){
       <tbody>${recs.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOfFor(r.measured_on,p)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table></div>
     </section>`);
   bindCommonHeader();
+  bindDoctorAlertPanel();
   renderDoctorMessageThread();
   renderDoctorPrescriptionList();
   renderDoctorControls();
@@ -4252,7 +4519,7 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPatientDetail=null;editingPrescriptionId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorPatientDetail=null;editingPrescriptionId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){
