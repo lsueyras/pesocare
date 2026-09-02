@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='16.5';
+const APP_VERSION='16.6';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -1019,8 +1019,26 @@ function formatDateTime(value){
 }
 
 
+
+const PATIENT_MEDICAL_NOTIFICATION_TYPES=[
+  'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED',
+  'NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED',
+  'NEW_CONTROL','CONTROL_CANCELLED'
+];
+
+const DOCTOR_PATIENT_CONTEXT_NOTIFICATION_TYPES=[
+  'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED',
+  'NEW_CONTROL','CONTROL_CANCELLED',
+  'NEW_WEIGHT','WEIGHT_UPDATED','WEIGHT_REMOVED',
+  'CLINICAL_ALERT'
+];
+
+function isActionableUnread(n){
+  return !!n && !n.read_at && n.type!=='PUSH_TEST';
+}
+
 function unreadCount(){
-  return notifications.filter(n=>!n.read_at).length;
+  return notifications.filter(isActionableUnread).length;
 }
 
 
@@ -1323,6 +1341,7 @@ function updateHeaderNotificationUI(){
   if(text){
     text.textContent=realtimeStatus==='live'?'En vivo':realtimeStatus==='connecting'?'Conectando…':'Sin conexión';
   }
+  updatePatientSubtabNotificationUI();
 }
 
 function showToast(title,body,type=''){
@@ -1357,23 +1376,48 @@ async function loadNotifications(){
 async function markNotificationRead(id){
   const item=notifications.find(n=>n.id===id);
   if(!item||item.read_at)return;
+
   const readAt=new Date().toISOString();
   item.read_at=readAt;
   updateHeaderNotificationUI();
+
   try{
-    await dbUpdate('user_notifications',`id=eq.${encodeURIComponent(id)}`,{read_at:readAt});
-  }catch(err){console.warn(err)}
+    await dbUpdate(
+      'user_notifications',
+      `id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(currentUser.id)}`,
+      {read_at:readAt}
+    );
+  }catch(err){
+    item.read_at=null;
+    updateHeaderNotificationUI();
+    console.warn('Notification read persistence failed',err);
+  }
 }
 
 async function markAllNotificationsRead(){
   const unread=notifications.filter(n=>!n.read_at);
-  if(!unread.length)return;
+  if(!unread.length){
+    updateHeaderNotificationUI();
+    renderNotificationList();
+    return;
+  }
+
   const readAt=new Date().toISOString();
   unread.forEach(n=>n.read_at=readAt);
   updateHeaderNotificationUI();
+
   try{
-    await dbUpdate('user_notifications',`user_id=eq.${encodeURIComponent(currentUser.id)}&read_at=is.null`,{read_at:readAt});
-  }catch(err){console.warn(err)}
+    await dbUpdate(
+      'user_notifications',
+      `user_id=eq.${encodeURIComponent(currentUser.id)}&read_at=is.null`,
+      {read_at:readAt}
+    );
+  }catch(err){
+    console.warn('Mark all notifications read failed',err);
+    await loadNotifications();
+    updateHeaderNotificationUI();
+  }
+
   renderNotificationList();
 }
 
@@ -1428,14 +1472,15 @@ function notificationCenterMarkup(){
 }
 
 function notificationItemMarkup(n){
-  return `<button type="button" class="notification-item ${n.read_at?'':'unread'}" data-notification-id="${n.id}">
+  const unread=isActionableUnread(n);
+  return `<button type="button" class="notification-item ${unread?'unread':''}" data-notification-id="${n.id}">
     <span class="notification-item-icon">${notificationIcon(n.type)}</span>
     <span class="notification-item-content">
       <strong>${esc(n.title)}</strong>
       <span>${esc(n.body||'')}</span>
       <small>${formatDateTime(n.created_at)} · ${notificationDestinationLabel(n)}</small>
     </span>
-    ${n.read_at?'':'<i class="unread-dot"></i>'}
+    ${unread?'<i class="unread-dot"></i>':''}
   </button>`;
 }
 
@@ -1448,6 +1493,7 @@ function renderNotificationList(){
   });
   const subtitle=document.querySelector('.notification-panel-head span');
   if(subtitle)subtitle.textContent=`${unreadCount()} sin leer`;
+  updateHeaderNotificationUI();
 }
 
 function showNotificationCenter(){
@@ -2174,10 +2220,28 @@ async function createProfile(e){
 
 
 function medicalUnreadCount(){
-  return notifications.filter(n=>!n.read_at&&[
-    'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED',
-    'NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'
-  ].includes(n.type)).length;
+  return notifications.filter(n=>isActionableUnread(n)&&PATIENT_MEDICAL_NOTIFICATION_TYPES.includes(n.type)).length;
+}
+
+function updatePatientSubtabNotificationUI(){
+  const doctorTab=document.querySelector('[data-patient-tab="DOCTOR"]');
+  if(!doctorTab)return;
+
+  const count=medicalUnreadCount();
+  let badge=doctorTab.querySelector('.subtab-badge');
+
+  if(count===0){
+    badge?.remove();
+    return;
+  }
+
+  if(!badge){
+    badge=document.createElement('span');
+    badge.className='subtab-badge';
+    doctorTab.append(' ',badge);
+  }
+
+  badge.textContent=count>99?'99+':String(count);
 }
 
 function patientSubTabsMarkup(){
@@ -3329,7 +3393,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.5'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.6'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -3401,19 +3465,26 @@ function renderPatientPrescriptionList(){
 function markVisibleMedicalNotifications(){
   const selectedDoctor=document.getElementById('patientDoctorSelect')?.value;
   const selectedControlDoctor=selectedPatientControlDoctorId();
-  notifications.filter(n=>!n.read_at&&[
+  const ids=[];
+
+  notifications.filter(n=>isActionableUnread(n)&&[
     'NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED'
-  ].includes(n.type)).forEach(n=>markNotificationRead(n.id));
+  ].includes(n.type)).forEach(n=>ids.push(n.id));
+
   if(selectedDoctor){
-    notifications.filter(n=>!n.read_at&&[
+    notifications.filter(n=>isActionableUnread(n)&&[
       'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'
-    ].includes(n.type)&&n.related_user_id===selectedDoctor).forEach(n=>markNotificationRead(n.id));
+    ].includes(n.type)&&n.related_user_id===selectedDoctor).forEach(n=>ids.push(n.id));
   }
+
   if(selectedControlDoctor){
-    notifications.filter(n=>!n.read_at&&[
+    notifications.filter(n=>isActionableUnread(n)&&[
       'NEW_CONTROL','CONTROL_CANCELLED'
-    ].includes(n.type)&&n.related_user_id===selectedControlDoctor).forEach(n=>markNotificationRead(n.id));
+    ].includes(n.type)&&n.related_user_id===selectedControlDoctor).forEach(n=>ids.push(n.id));
   }
+
+  [...new Set(ids)].forEach(id=>markNotificationRead(id));
+  updateHeaderNotificationUI();
 }
 
 function selectedPatientDoctorId(){
@@ -3598,6 +3669,14 @@ async function syncDoctorPrescriptions(patientId){
 
 async function syncDoctorMedicalData(patientId){
   await Promise.allSettled([syncDoctorMessages(patientId),syncDoctorPrescriptions(patientId),syncDoctorControls(patientId)]);
+
+  if(doctorPatientDetail?.profile?.user_id===patientId){
+    notifications.filter(n=>
+      isActionableUnread(n) &&
+      DOCTOR_PATIENT_CONTEXT_NOTIFICATION_TYPES.includes(n.type) &&
+      n.related_user_id===patientId
+    ).forEach(n=>markNotificationRead(n.id));
+  }
 }
 
 async function syncDoctorConversation(patientId){return syncDoctorMessages(patientId)}
@@ -4054,10 +4133,13 @@ async function openDoctorPatient(patientId){
       p_patient_user_id:patientId
     })||[]);
     doctorPatientDetail={profile:p,records:recs,prescriptions,messages,controls};
-    const matching=notifications.filter(n=>!n.read_at&&[
-      'NEW_MESSAGE','NEW_CONTROL','CONTROL_CANCELLED','CLINICAL_ALERT'
-    ].includes(n.type)&&n.related_user_id===patientId);
+    const matching=notifications.filter(n=>
+      isActionableUnread(n) &&
+      DOCTOR_PATIENT_CONTEXT_NOTIFICATION_TYPES.includes(n.type) &&
+      n.related_user_id===patientId
+    );
     for(const n of matching)markNotificationRead(n.id);
+    updateHeaderNotificationUI();
     doctorPatientDetailView();
   }catch(err){alert(err.message)}
 }

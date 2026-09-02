@@ -1655,3 +1655,11 @@ input[data-date-cl].date-invalid{
   .history-table .history-col-waist{width:23%}
   .history-table .history-col-actions{width:20%}
 }
+
+/* BodyCare V16.6 — lectura sincronizada de notificaciones */
+.notification-badge.hidden-badge{
+  display:none !important;
+}
+.patient-subtab .subtab-badge{
+  flex:0 0 auto;
+}

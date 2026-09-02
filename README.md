@@ -410,3 +410,22 @@ https://lsueyras.github.io/pesocare/
   - eliminación lógica con auditoría.
 - Los registros eliminados dejan de participar en métricas, gráficos, historial y priorización médica.
 - Médico recibe NEW_WEIGHT / WEIGHT_UPDATED / WEIGHT_REMOVED por Realtime + Push.
+
+
+## BodyCare V16.5 — Historial optimizado para iPhone
+- Historial sin desplazamiento horizontal en pantallas móviles.
+- Cada registro permanece en una sola fila.
+- Columnas móviles: Fecha · Sem. · Peso · Cint. · Acc.
+- Anchos proporcionales mediante `table-layout: fixed`.
+- Editar y Eliminar se presentan como botones compactos con iconos en móvil.
+- En escritorio se mantienen las etiquetas completas.
+- Registro inicial mantiene identificación compacta `I` en móvil.
+
+
+## BodyCare V16.6 — Estado de lectura unificado
+- Campana y badge de Mi médico usan el mismo `read_at`.
+- Abrir la ficha de un paciente como médico marca como vistos mensajes, controles, peso, correcciones/eliminaciones y alertas de ese paciente.
+- Abrir Mi médico como paciente marca los eventos médicos que están visibles en esa pestaña.
+- El badge de Mi médico cambia inmediatamente sin recargar toda la vista.
+- PUSH_TEST queda como informativo y no mantiene encendida la campana.
+- Si falla persistir `read_at`, BodyCare restaura el estado visual.
