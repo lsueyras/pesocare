@@ -429,3 +429,24 @@ https://lsueyras.github.io/pesocare/
 - El badge de Mi médico cambia inmediatamente sin recargar toda la vista.
 - PUSH_TEST queda como informativo y no mantiene encendida la campana.
 - Si falla persistir `read_at`, BodyCare restaura el estado visual.
+
+
+## BodyCare V17 — Agenda médica + panel operativo
+- Portal BodyCare Pro incorpora agenda del profesional.
+- Vistas:
+  - Hoy;
+  - Próximos 7 días.
+- Cada control muestra:
+  - hora;
+  - duración;
+  - paciente;
+  - prioridad V16;
+  - quién lo agendó;
+  - observación;
+  - acceso directo al paciente.
+- Agenda consulta únicamente controles activos del médico autenticado.
+- Cancelaciones desaparecen automáticamente.
+- Nuevos controles y cancelaciones actualizan agenda por Realtime.
+- Sincronización de respaldo del dashboard médico cada 15 segundos.
+- Al volver a la pestaña, se actualizan agenda y prioridades.
+- RPC backend: `bodycare_get_doctor_agenda(date, integer)`.

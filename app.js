@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='16.6';
+const APP_VERSION='17.0';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -19,6 +19,7 @@ let account=null, roles=[], activePortal='PATIENT';
 let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], patientControls=[], supportTickets=[];
 let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
 let doctorPriorities=[], doctorAlertSettings=null;
+let doctorAgenda=[], doctorAgendaMode='TODAY', doctorAgendaSyncing=false;
 let adminUsers=[], adminTickets=[], adminLoaded=false;
 let editingPrescriptionId=null;
 let editingWeightRecordId=null;
@@ -1769,6 +1770,8 @@ async function handleRealtimeNotification(n,fromFallback=false){
       }
       if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id===n.related_user_id){
         await syncDoctorControls(n.related_user_id);
+      }else if(hasRole('DOCTOR')&&activePortal==='DOCTOR'&&!doctorPatientDetail){
+        await syncDoctorAgenda(true);
       }
     }
 
@@ -1791,6 +1794,7 @@ async function handleRealtimeNotification(n,fromFallback=false){
 
     if(n.type==='NEW_PATIENT'&&hasRole('DOCTOR')&&activePortal==='DOCTOR'&&!userIsTyping()){
       await loadData();render();
+      if(!doctorPatientDetail)syncDoctorHomeData();
     }
 
     if(n.type==='SUPPORT'&&hasRole('ADMIN')){
@@ -2049,7 +2053,7 @@ async function loadData(){
 
   profile=null;records=[];careLinks=[];linkedDoctorProfiles=[];
   patientPrescriptions=[];patientMessages=[];supportTickets=[];
-  doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;
+  doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];
 
   if(account?.status!=='ACTIVE')return;
 
@@ -2087,6 +2091,16 @@ async function loadData(){
       console.warn('Doctor priority data unavailable',err);
       doctorPriorities=[];
       doctorAlertSettings=null;
+    }
+
+    try{
+      doctorAgenda=await dbRpc('bodycare_get_doctor_agenda',{
+        p_start_date:today(),
+        p_days:7
+      })||[];
+    }catch(err){
+      console.warn('Doctor agenda unavailable',err);
+      doctorAgenda=[];
     }
   }
 }
@@ -2292,6 +2306,7 @@ async function syncVisibleContext(){
     if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR')await syncPatientMedicalData();
     else if(activePortal==='PATIENT'&&activePatientTab==='SUPPORT')await syncSupportTickets();
     else if(activePortal==='DOCTOR'&&doctorPatientDetail?.profile?.user_id)await syncDoctorMedicalData(doctorPatientDetail.profile.user_id);
+    else if(activePortal==='DOCTOR'&&!doctorPatientDetail)await syncDoctorHomeData();
   }catch(err){console.warn('Context sync failed',err)}
 }
 
@@ -2309,6 +2324,9 @@ function startContextSync(){
     const patientId=doctorPatientDetail.profile.user_id;
     syncDoctorMedicalData(patientId);
     contextSyncTimer=setInterval(()=>syncDoctorMedicalData(patientId),3000);
+  }else if(activePortal==='DOCTOR'&&!doctorPatientDetail){
+    syncDoctorHomeData();
+    contextSyncTimer=setInterval(()=>syncDoctorHomeData(),15000);
   }
 }
 
@@ -3393,7 +3411,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v16.6'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v17.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -3762,6 +3780,151 @@ async function sendPatientMessage(e){
 }
 
 
+
+function chileDateFromTimestamp(value){
+  if(!value)return '';
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return '';
+  const parts=new Intl.DateTimeFormat('en-CA',{
+    timeZone:'America/Santiago',
+    year:'numeric',month:'2-digit',day:'2-digit'
+  }).formatToParts(d).reduce((acc,p)=>{acc[p.type]=p.value;return acc},{});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function chileTimeFromTimestamp(value){
+  if(!value)return '';
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return '';
+  const parts=new Intl.DateTimeFormat('es-CL',{
+    timeZone:'America/Santiago',
+    hour:'2-digit',minute:'2-digit',hour12:false
+  }).formatToParts(d).reduce((acc,p)=>{acc[p.type]=p.value;return acc},{});
+  return `${parts.hour}:${parts.minute}`;
+}
+
+function agendaDateLabel(dateIso){
+  if(!dateIso)return '';
+  const [y,m,d]=dateIso.split('-').map(Number);
+  const dt=new Date(Date.UTC(y,m-1,d));
+  const label=new Intl.DateTimeFormat('es-CL',{
+    weekday:'long',day:'numeric',month:'long',timeZone:'UTC'
+  }).format(dt);
+  return label.replace(/^./,c=>c.toUpperCase());
+}
+
+function doctorAgendaRows(){
+  const todayIso=today();
+  const rows=[...(doctorAgenda||[])].sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
+  return doctorAgendaMode==='TODAY'
+    ? rows.filter(c=>chileDateFromTimestamp(c.scheduled_at)===todayIso)
+    : rows;
+}
+
+function doctorAgendaCounts(){
+  const todayIso=today();
+  const rows=doctorAgenda||[];
+  return {
+    today:rows.filter(c=>chileDateFromTimestamp(c.scheduled_at)===todayIso).length,
+    week:rows.length
+  };
+}
+
+function agendaCreatorText(item){
+  return item.created_by_user_id===currentUser.id?'Agendado por ti':'Agendado por paciente';
+}
+
+function doctorAgendaMarkup(){
+  const rows=doctorAgendaRows();
+  if(!rows.length){
+    return `<div class="agenda-empty">
+      <span class="agenda-empty-icon">🗓️</span>
+      <strong>${doctorAgendaMode==='TODAY'?'Sin controles para hoy':'Sin controles en los próximos 7 días'}</strong>
+      <span>Los nuevos controles aparecerán aquí automáticamente.</span>
+    </div>`;
+  }
+
+  let lastDate='';
+  return `<div class="doctor-agenda-list">${rows.map(item=>{
+    const dateIso=chileDateFromTimestamp(item.scheduled_at);
+    const priority=priorityForPatient(item.patient_user_id);
+    const dateHeader=dateIso!==lastDate;
+    lastDate=dateIso;
+
+    return `${dateHeader?`<div class="agenda-date-heading">${agendaDateLabel(dateIso)}</div>`:''}
+      <div class="agenda-row">
+        <div class="agenda-time-block">
+          <strong>${esc(chileTimeFromTimestamp(item.scheduled_at))}</strong>
+          <span>${Number(item.slot_minutes||30)} min</span>
+        </div>
+        <div class="agenda-patient">
+          <div class="agenda-patient-title">
+            <strong>${esc(item.patient_name||'Paciente')}</strong>
+            <span class="priority-chip ${String(priority.priority||'GREEN').toLowerCase()}">${priorityLabel(priority.priority||'GREEN')}</span>
+          </div>
+          <div class="agenda-meta">${esc(agendaCreatorText(item))}${item.notes?` · ${esc(item.notes)}`:''}</div>
+        </div>
+        <button type="button" class="secondary small-btn agenda-open-patient" data-open-agenda-patient="${item.patient_user_id}">Abrir paciente</button>
+      </div>`;
+  }).join('')}</div>`;
+}
+
+function renderDoctorAgenda(){
+  const counts=doctorAgendaCounts();
+  const todayCount=document.getElementById('agendaTodayCount');
+  const weekCount=document.getElementById('agendaWeekCount');
+  if(todayCount)todayCount.textContent=String(counts.today);
+  if(weekCount)weekCount.textContent=String(counts.week);
+
+  document.querySelectorAll('[data-agenda-mode]').forEach(btn=>{
+    btn.classList.toggle('active',btn.dataset.agendaMode===doctorAgendaMode);
+  });
+
+  const list=document.getElementById('doctorAgendaList');
+  if(list){
+    list.innerHTML=doctorAgendaMarkup();
+    list.querySelectorAll('[data-open-agenda-patient]').forEach(btn=>{
+      btn.addEventListener('click',()=>openDoctorPatient(btn.dataset.openAgendaPatient));
+    });
+  }
+
+  const status=document.getElementById('doctorAgendaStatus');
+  if(status){
+    status.textContent=doctorAgendaSyncing?'Actualizando…':'Actualizado';
+    status.classList.toggle('syncing',doctorAgendaSyncing);
+  }
+}
+
+async function syncDoctorAgenda(renderUI=true){
+  if(!hasRole('DOCTOR')||doctorAgendaSyncing)return;
+  doctorAgendaSyncing=true;
+  if(renderUI)renderDoctorAgenda();
+
+  try{
+    doctorAgenda=await dbRpc('bodycare_get_doctor_agenda',{
+      p_start_date:today(),
+      p_days:7
+    })||[];
+  }catch(err){
+    console.warn('Doctor agenda sync failed',err);
+  }finally{
+    doctorAgendaSyncing=false;
+    if(renderUI)renderDoctorAgenda();
+  }
+}
+
+async function syncDoctorHomeData(){
+  if(!hasRole('DOCTOR')||doctorPatientDetail)return;
+  await Promise.allSettled([
+    syncDoctorAgenda(false),
+    syncDoctorPriorities(false)
+  ]);
+  if(activePortal==='DOCTOR'&&!doctorPatientDetail&&!userIsTyping()){
+    renderDoctorAgenda();
+    renderDoctorPriorityDashboard();
+  }
+}
+
 function priorityRank(value){
   return value==='RED'?1:value==='ORANGE'?2:3;
 }
@@ -4008,6 +4171,30 @@ function doctorView(){
         </div>
       </section>
 
+      <section class="card doctor-agenda-card">
+        <div class="card-head">
+          <div>
+            <h2 class="section-title">Agenda médica</h2>
+            <div class="muted">Controles programados y acceso directo al seguimiento de cada paciente.</div>
+          </div>
+          <span id="doctorAgendaStatus" class="agenda-sync-status">Actualizado</span>
+        </div>
+
+        <div class="agenda-toolbar">
+          <div class="agenda-mode-buttons">
+            <button type="button" class="agenda-mode-btn ${doctorAgendaMode==='TODAY'?'active':''}" data-agenda-mode="TODAY">
+              Hoy <strong id="agendaTodayCount">${doctorAgendaCounts().today}</strong>
+            </button>
+            <button type="button" class="agenda-mode-btn ${doctorAgendaMode==='WEEK'?'active':''}" data-agenda-mode="WEEK">
+              Próximos 7 días <strong id="agendaWeekCount">${doctorAgendaCounts().week}</strong>
+            </button>
+          </div>
+          <button type="button" id="refreshDoctorAgenda" class="secondary small-btn">Actualizar</button>
+        </div>
+
+        <div id="doctorAgendaList">${doctorAgendaMarkup()}</div>
+      </section>
+
       <section class="priority-summary">
         <div class="priority-summary-card red"><span>Requiere atención</span><strong id="priorityRedCount">${counts.red}</strong></div>
         <div class="priority-summary-card orange"><span>Revisar</span><strong id="priorityOrangeCount">${counts.orange}</strong></div>
@@ -4060,6 +4247,13 @@ function doctorView(){
   bindCommonHeader();
   document.getElementById('doctorProfileForm')?.addEventListener('submit',saveDoctorProfile);
   document.getElementById('doctorAlertSettingsForm')?.addEventListener('submit',saveDoctorAlertSettings);
+
+  document.querySelectorAll('[data-agenda-mode]').forEach(btn=>btn.addEventListener('click',()=>{
+    doctorAgendaMode=btn.dataset.agendaMode==='WEEK'?'WEEK':'TODAY';
+    renderDoctorAgenda();
+  }));
+  document.getElementById('refreshDoctorAgenda')?.addEventListener('click',()=>syncDoctorAgenda(true));
+  document.querySelectorAll('[data-open-agenda-patient]').forEach(btn=>btn.addEventListener('click',()=>openDoctorPatient(btn.dataset.openAgendaPatient)));
 
   document.getElementById('saveDoctorSlotMinutes')?.addEventListener('click',async()=>{
     const minutes=validControlSlotMinutes(document.getElementById('doctorSlotMinutesSetting')?.value||30);
@@ -4777,7 +4971,7 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){

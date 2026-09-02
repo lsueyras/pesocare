@@ -1663,3 +1663,168 @@ input[data-date-cl].date-invalid{
 .patient-subtab .subtab-badge{
   flex:0 0 auto;
 }
+
+/* BodyCare V17 — Agenda médica operativa */
+.doctor-agenda-card{
+  overflow:hidden;
+}
+.agenda-sync-status{
+  display:inline-flex;
+  align-items:center;
+  min-height:25px;
+  padding:3px 8px;
+  border-radius:999px;
+  background:#ecfdf3;
+  color:#027a48;
+  font-size:.7rem;
+  font-weight:750;
+}
+.agenda-sync-status.syncing{
+  background:#fffaeb;
+  color:#b54708;
+}
+.agenda-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin:12px 0;
+}
+.agenda-mode-buttons{
+  display:flex;
+  gap:7px;
+  flex-wrap:wrap;
+}
+.agenda-mode-btn{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  min-height:38px;
+  padding:7px 10px;
+  border:1px solid #d0d5dd;
+  border-radius:10px;
+  background:#fff;
+  color:#475467;
+  font:inherit;
+  font-size:.8rem;
+  font-weight:700;
+  cursor:pointer;
+}
+.agenda-mode-btn strong{
+  display:inline-grid;
+  place-items:center;
+  min-width:23px;
+  height:23px;
+  padding:0 5px;
+  border-radius:999px;
+  background:#f2f4f7;
+  color:#344054;
+  font-size:.7rem;
+}
+.agenda-mode-btn.active{
+  border-color:#175cd3;
+  background:#eff8ff;
+  color:#175cd3;
+}
+.agenda-mode-btn.active strong{
+  background:#175cd3;
+  color:#fff;
+}
+.doctor-agenda-list{
+  display:flex;
+  flex-direction:column;
+}
+.agenda-date-heading{
+  margin:13px 0 5px;
+  padding:6px 0;
+  border-bottom:1px solid #eaecf0;
+  color:#344054;
+  font-size:.76rem;
+  font-weight:800;
+}
+.agenda-date-heading:first-child{margin-top:2px}
+.agenda-row{
+  display:grid;
+  grid-template-columns:76px minmax(0,1fr) auto;
+  align-items:center;
+  gap:12px;
+  padding:11px 0;
+  border-bottom:1px solid #f2f4f7;
+}
+.agenda-row:last-child{border-bottom:0}
+.agenda-time-block{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.agenda-time-block strong{
+  color:#101828;
+  font-size:1rem;
+  font-variant-numeric:tabular-nums;
+}
+.agenda-time-block span{
+  color:#667085;
+  font-size:.7rem;
+}
+.agenda-patient{
+  min-width:0;
+}
+.agenda-patient-title{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  flex-wrap:wrap;
+}
+.agenda-patient-title>strong{
+  color:#101828;
+  font-size:.9rem;
+}
+.agenda-meta{
+  margin-top:3px;
+  color:#667085;
+  font-size:.73rem;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.agenda-empty{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+  min-height:145px;
+  padding:20px;
+  color:#667085;
+  text-align:center;
+}
+.agenda-empty strong{color:#344054}
+.agenda-empty-icon{font-size:1.8rem}
+
+@media(max-width:650px){
+  .agenda-toolbar{
+    align-items:stretch;
+    flex-direction:column;
+  }
+  .agenda-mode-buttons{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+  }
+  .agenda-mode-btn{
+    justify-content:center;
+  }
+  #refreshDoctorAgenda{
+    width:100%;
+  }
+  .agenda-row{
+    grid-template-columns:58px minmax(0,1fr);
+    gap:9px;
+  }
+  .agenda-open-patient{
+    grid-column:1 / -1;
+    width:100%;
+  }
+  .agenda-meta{
+    white-space:normal;
+  }
+}
