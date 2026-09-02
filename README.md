@@ -464,3 +464,12 @@ https://lsueyras.github.io/pesocare/
 - Agenda V17 muestra si un control está Programado o Confirmado.
 - Realtime + Push para confirmación, completado e inasistencia.
 - Tabla `care_control_events` conserva trazabilidad de cambios de estado.
+
+
+## BodyCare V18.1 — Consistencia de notificaciones
+- `read_at` se persiste mediante RPC SECURITY DEFINER propia del usuario.
+- `Marcar todas como leídas` vuelve a consultar Supabase inmediatamente.
+- Estado de lectura monótono: un evento Realtime atrasado nunca puede convertir una notificación leída nuevamente en no leída.
+- El fallback de 8 segundos reconcilia por ID y conserva `read_at`.
+- El centro de notificaciones carga un snapshot autoritativo antes de abrir.
+- Nueva RPC backend: `bodycare_mark_notifications_read(uuid[])`.

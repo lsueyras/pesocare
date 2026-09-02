@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='18.0';
+const APP_VERSION='18.1';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -1042,6 +1042,39 @@ function unreadCount(){
   return notifications.filter(isActionableUnread).length;
 }
 
+function reconcileNotificationRecord(incoming){
+  if(!incoming?.id)return incoming;
+  const existing=notifications.find(n=>n.id===incoming.id);
+  if(!existing)return incoming;
+
+  // Read state is monotonic. A delayed packet can never turn READ back into UNREAD.
+  return {
+    ...existing,
+    ...incoming,
+    read_at:existing.read_at||incoming.read_at||null
+  };
+}
+
+function reconcileNotificationSnapshot(latest){
+  const local=new Map(notifications.map(n=>[n.id,n]));
+  return (latest||[]).map(incoming=>{
+    const existing=local.get(incoming.id);
+    if(!existing)return incoming;
+    return {
+      ...existing,
+      ...incoming,
+      read_at:existing.read_at||incoming.read_at||null
+    };
+  });
+}
+
+async function reloadNotificationsAuthoritative(){
+  if(!currentUser?.id||!session?.access_token)return;
+  const latest=await dbGet(`user_notifications?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc&limit=50`)||[];
+  notifications=reconcileNotificationSnapshot(latest);
+  updateHeaderNotificationUI();
+}
+
 
 function base64UrlToUint8Array(value){
   const padding='='.repeat((4-value.length%4)%4);
@@ -1370,7 +1403,8 @@ function showToast(title,body,type=''){
 async function loadNotifications(){
   if(!currentUser?.id||!session?.access_token){notifications=[];return}
   try{
-    notifications=await dbGet(`user_notifications?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc&limit=50`)||[];
+    const latest=await dbGet(`user_notifications?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc&limit=50`)||[];
+    notifications=reconcileNotificationSnapshot(latest);
   }catch(err){
     console.warn('Notifications unavailable',err);
     notifications=[];
@@ -1386,20 +1420,17 @@ async function markNotificationRead(id){
   updateHeaderNotificationUI();
 
   try{
-    await dbUpdate(
-      'user_notifications',
-      `id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(currentUser.id)}`,
-      {read_at:readAt}
-    );
+    await dbRpc('bodycare_mark_notifications_read',{p_notification_ids:[id]});
+    // Keep optimistic read state. The periodic sync will confirm it from Supabase.
   }catch(err){
-    item.read_at=null;
-    updateHeaderNotificationUI();
     console.warn('Notification read persistence failed',err);
+    try{await reloadNotificationsAuthoritative()}catch{}
   }
 }
 
 async function markAllNotificationsRead(){
   const unread=notifications.filter(n=>!n.read_at);
+
   if(!unread.length){
     updateHeaderNotificationUI();
     renderNotificationList();
@@ -1409,17 +1440,14 @@ async function markAllNotificationsRead(){
   const readAt=new Date().toISOString();
   unread.forEach(n=>n.read_at=readAt);
   updateHeaderNotificationUI();
+  renderNotificationList();
 
   try{
-    await dbUpdate(
-      'user_notifications',
-      `user_id=eq.${encodeURIComponent(currentUser.id)}&read_at=is.null`,
-      {read_at:readAt}
-    );
+    await dbRpc('bodycare_mark_notifications_read',{p_notification_ids:null});
+    await reloadNotificationsAuthoritative();
   }catch(err){
     console.warn('Mark all notifications read failed',err);
-    await loadNotifications();
-    updateHeaderNotificationUI();
+    try{await reloadNotificationsAuthoritative()}catch{}
   }
 
   renderNotificationList();
@@ -1738,18 +1766,28 @@ async function syncNotificationsFallback(){
     const latest=await dbGet(`user_notifications?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc&limit=50`)||[];
     const known=new Set(notifications.map(n=>n.id));
     const fresh=latest.filter(n=>!known.has(n.id)).reverse();
-    notifications=latest;
+
+    notifications=reconcileNotificationSnapshot(latest);
     updateHeaderNotificationUI();
+
     for(const n of fresh)await handleRealtimeNotification(n,true);
-  }catch{}
+  }catch(err){
+    console.warn('Notification fallback sync failed',err);
+  }
 }
 
 async function handleRealtimeNotification(n,fromFallback=false){
   if(!n?.id)return;
-  const exists=notifications.some(x=>x.id===n.id);
-  if(!exists)notifications.unshift(n);
+
+  const index=notifications.findIndex(x=>x.id===n.id);
+  const exists=index>=0;
+  const merged=reconcileNotificationRecord(n);
+
+  if(exists)notifications[index]=merged;
+  else notifications.unshift(merged);
+
   updateHeaderNotificationUI();
-  if(!fromFallback||!exists)showToast(n.title,n.body,n.type);
+  if(!fromFallback&&!exists)showToast(merged.title,merged.body,merged.type);
 
   try{
     if(['NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED'].includes(n.type)){
@@ -3599,7 +3637,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v18.0'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v18.1'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();

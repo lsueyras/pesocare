@@ -1,4 +1,4 @@
-const CACHE='bodycare-v18';
+const CACHE='bodycare-v18-1';
 const CORE=['./','./index.html','./styles.css?v=18-bodycare','./app.js?v=18-bodycare','./manifest.webmanifest','./icon.svg','./brand-logo.png','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
 
 self.addEventListener('install',event=>{

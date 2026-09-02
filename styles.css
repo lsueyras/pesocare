@@ -1965,3 +1965,5 @@ input[data-date-cl].date-invalid{
     padding:18px 18px calc(18px + env(safe-area-inset-bottom));
   }
 }
+
+/* BodyCare V18.1 — consistencia de estado de lectura */
