@@ -473,3 +473,27 @@ https://lsueyras.github.io/pesocare/
 - El fallback de 8 segundos reconcilia por ID y conserva `read_at`.
 - El centro de notificaciones carga un snapshot autoritativo antes de abrir.
 - Nueva RPC backend: `bodycare_mark_notifications_read(uuid[])`.
+
+
+## BodyCare V19 — Outcomes & Adherence Dashboard
+- Nuevo panel médico de resultados y adherencia.
+- KPIs de cartera:
+  - pacientes activos;
+  - cambio de peso promedio;
+  - pacientes con reducción >=5%;
+  - adherencia de registros últimas 4 semanas;
+  - asistencia a controles últimos 90 días;
+  - cambio de cintura promedio.
+- Visualización comparativa de cambio de peso por paciente.
+- Tabla operativa con:
+  - prioridad clínica;
+  - peso y variación;
+  - cintura y variación;
+  - adherencia;
+  - asistencia;
+  - próximo control.
+- Filtros: todos, prioridad, >=5%, baja adherencia.
+- Búsqueda por paciente.
+- Ficha médica incorpora `Resumen de evolución`.
+- Métricas transparentes y descriptivas; no reemplazan juicio clínico.
+- Backend seguro: `bodycare_get_doctor_outcomes(integer)`.

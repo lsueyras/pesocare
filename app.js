@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='18.1';
+const APP_VERSION='19.0';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -20,6 +20,7 @@ let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessa
 let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
 let doctorPriorities=[], doctorAlertSettings=null;
 let doctorAgenda=[], doctorAgendaMode='TODAY', doctorAgendaSyncing=false;
+let doctorOutcomes=[], doctorOutcomeFilter='ALL', doctorOutcomeSearch='';
 let adminUsers=[], adminTickets=[], adminLoaded=false;
 let editingPrescriptionId=null;
 let editingWeightRecordId=null;
@@ -1815,7 +1816,7 @@ async function handleRealtimeNotification(n,fromFallback=false){
       if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id===n.related_user_id){
         await syncDoctorControls(n.related_user_id);
       }else if(hasRole('DOCTOR')&&activePortal==='DOCTOR'&&!doctorPatientDetail){
-        await syncDoctorAgenda(true);
+        await Promise.allSettled([syncDoctorAgenda(true),syncDoctorOutcomes(true)]);
       }
     }
 
@@ -2097,7 +2098,7 @@ async function loadData(){
 
   profile=null;records=[];careLinks=[];linkedDoctorProfiles=[];
   patientPrescriptions=[];patientMessages=[];supportTickets=[];
-  doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];
+  doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];
 
   if(account?.status!=='ACTIVE')return;
 
@@ -2145,6 +2146,15 @@ async function loadData(){
     }catch(err){
       console.warn('Doctor agenda unavailable',err);
       doctorAgenda=[];
+    }
+
+    try{
+      doctorOutcomes=await dbRpc('bodycare_get_doctor_outcomes',{
+        p_control_window_days:90
+      })||[];
+    }catch(err){
+      console.warn('Doctor outcomes unavailable',err);
+      doctorOutcomes=[];
     }
   }
 }
@@ -3637,7 +3647,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v18.1'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v19.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -4140,15 +4150,294 @@ async function syncDoctorAgenda(renderUI=true){
   }
 }
 
+
+function outcomeNumber(value,digits=1){
+  if(value===null||value===undefined||value==='')return null;
+  const n=Number(value);
+  return Number.isFinite(n)?n:null;
+}
+
+function outcomePercent(value,digits=0){
+  const n=outcomeNumber(value,digits);
+  if(n===null)return '—';
+  return `${n.toLocaleString('es-CL',{minimumFractionDigits:digits,maximumFractionDigits:digits})}%`;
+}
+
+function outcomeSigned(value,suffix='',digits=1){
+  const n=outcomeNumber(value,digits);
+  if(n===null)return '—';
+  const text=Math.abs(n).toLocaleString('es-CL',{minimumFractionDigits:digits,maximumFractionDigits:digits});
+  return `${n>0?'+':n<0?'−':''}${text}${suffix}`;
+}
+
+function doctorOutcomeSummary(){
+  const rows=doctorOutcomes||[];
+  const weightRows=rows.filter(r=>outcomeNumber(r.weight_change_pct)!==null);
+  const waistRows=rows.filter(r=>outcomeNumber(r.waist_change_cm)!==null);
+  const adherenceRows=rows.filter(r=>outcomeNumber(r.record_adherence_pct_28d)!==null);
+  const attendanceRows=rows.filter(r=>outcomeNumber(r.attendance_pct)!==null);
+
+  const avg=items=>items.length?items.reduce((s,v)=>s+v,0)/items.length:null;
+
+  return {
+    patients:rows.length,
+    avgWeightPct:avg(weightRows.map(r=>Number(r.weight_change_pct))),
+    achieved5:rows.filter(r=>r.achieved_5pct===true).length,
+    avgAdherence:avg(adherenceRows.map(r=>Number(r.record_adherence_pct_28d))),
+    avgAttendance:avg(attendanceRows.map(r=>Number(r.attendance_pct))),
+    avgWaist:avg(waistRows.map(r=>Number(r.waist_change_cm)))
+  };
+}
+
+function outcomeForPatient(patientId){
+  return (doctorOutcomes||[]).find(r=>r.patient_user_id===patientId)||null;
+}
+
+function goalProgressPct(row){
+  const initial=outcomeNumber(row?.initial_weight);
+  const current=outcomeNumber(row?.current_weight);
+  const target=outcomeNumber(row?.target_weight);
+  if(initial===null||current===null||target===null||initial===target)return null;
+  const pct=((initial-current)/(initial-target))*100;
+  return Math.max(0,Math.min(100,pct));
+}
+
+function outcomePriority(row){
+  return priorityForPatient(row.patient_user_id);
+}
+
+function outcomeFilterMatches(row){
+  const priority=outcomePriority(row);
+  const adherence=outcomeNumber(row.record_adherence_pct_28d)||0;
+  if(doctorOutcomeFilter==='PRIORITY'&&!['RED','ORANGE'].includes(priority.priority))return false;
+  if(doctorOutcomeFilter==='ACHIEVED5'&&row.achieved_5pct!==true)return false;
+  if(doctorOutcomeFilter==='LOW_ADHERENCE'&&adherence>=50)return false;
+
+  const q=String(doctorOutcomeSearch||'').trim().toLocaleLowerCase('es-CL');
+  if(q&&!String(row.patient_name||'').toLocaleLowerCase('es-CL').includes(q))return false;
+  return true;
+}
+
+function outcomeStatusText(row){
+  const adherence=outcomeNumber(row.record_adherence_pct_28d);
+  const attendance=outcomeNumber(row.attendance_pct);
+  const parts=[];
+  if(adherence!==null)parts.push(`Registros ${outcomePercent(adherence,0)}`);
+  if(attendance!==null)parts.push(`Asistencia ${outcomePercent(attendance,0)}`);
+  return parts.join(' · ')||'Sin métricas suficientes';
+}
+
+function nextControlText(value){
+  if(!value)return 'Sin próximo control';
+  const d=chileDateFromTimestamp(value);
+  const t=chileTimeFromTimestamp(value);
+  return `${fmt(d)} · ${t}`;
+}
+
+function outcomeRowMarkup(row){
+  const priority=outcomePriority(row);
+  const changePct=outcomeNumber(row.weight_change_pct);
+  const adherence=outcomeNumber(row.record_adherence_pct_28d);
+  const attendance=outcomeNumber(row.attendance_pct);
+  return `<div class="outcome-patient-row">
+    <div class="outcome-patient-identity">
+      <div class="outcome-patient-name">
+        <strong>${esc(row.patient_name||'Paciente')}</strong>
+        <span class="priority-chip ${String(priority.priority||'GREEN').toLowerCase()}">${priorityLabel(priority.priority||'GREEN')}</span>
+      </div>
+      <span>${row.latest_record_date?`Último registro ${fmt(row.latest_record_date)}`:'Sin registro reciente'}</span>
+    </div>
+    <div class="outcome-cell">
+      <span>Peso actual</span>
+      <strong>${row.current_weight!==null&&row.current_weight!==undefined?kg(row.current_weight):'—'}</strong>
+      <small>${changePct===null?'Sin comparación':`${outcomeSigned(row.weight_change_kg,' kg',2)} · ${outcomeSigned(changePct,'%',1)}`}</small>
+    </div>
+    <div class="outcome-cell">
+      <span>Cintura</span>
+      <strong>${row.current_waist!==null&&row.current_waist!==undefined?cm(row.current_waist):'—'}</strong>
+      <small>${outcomeSigned(row.waist_change_cm,' cm',1)}</small>
+    </div>
+    <div class="outcome-cell">
+      <span>Adherencia 4 sem</span>
+      <strong>${adherence===null?'—':outcomePercent(adherence,0)}</strong>
+      <div class="outcome-progress"><i style="width:${Math.max(0,Math.min(100,adherence||0))}%"></i></div>
+    </div>
+    <div class="outcome-cell">
+      <span>Asistencia 90 días</span>
+      <strong>${attendance===null?'—':outcomePercent(attendance,0)}</strong>
+      <small>${Number(row.completed_controls||0)} completados · ${Number(row.no_show_controls||0)} inasist.</small>
+    </div>
+    <div class="outcome-cell outcome-next-control">
+      <span>Próximo control</span>
+      <strong>${esc(nextControlText(row.next_control_at))}</strong>
+    </div>
+    <button type="button" class="primary small-btn outcome-open-btn" data-open-outcome-patient="${row.patient_user_id}">Abrir</button>
+  </div>`;
+}
+
+function doctorOutcomesMarkup(){
+  const rows=(doctorOutcomes||[]).filter(outcomeFilterMatches);
+  if(!doctorOutcomes.length)return '<div class="empty-state">Aún no hay pacientes con datos para analizar.</div>';
+  if(!rows.length)return '<div class="empty-state">No hay pacientes que coincidan con este filtro.</div>';
+  return `<div class="outcome-patient-list">${rows.map(outcomeRowMarkup).join('')}</div>`;
+}
+
+function outcomeWeightBarsMarkup(){
+  const rows=(doctorOutcomes||[])
+    .filter(r=>outcomeNumber(r.weight_change_pct)!==null)
+    .sort((a,b)=>Number(a.weight_change_pct)-Number(b.weight_change_pct))
+    .slice(0,12);
+
+  if(!rows.length)return '<div class="empty-state">Sin datos suficientes para comparar cambios de peso.</div>';
+
+  const maxAbs=Math.max(5,...rows.map(r=>Math.abs(Number(r.weight_change_pct))));
+  return `<div class="outcome-bars">${rows.map(r=>{
+    const value=Number(r.weight_change_pct);
+    const width=Math.max(2,Math.min(100,Math.abs(value)/maxAbs*100));
+    return `<div class="outcome-bar-row">
+      <span class="outcome-bar-name">${esc(r.patient_name||'Paciente')}</span>
+      <div class="outcome-bar-track"><i class="${value<=0?'loss':'gain'}" style="width:${width}%"></i></div>
+      <strong>${outcomeSigned(value,'%',1)}</strong>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function doctorOutcomesSectionMarkup(){
+  const s=doctorOutcomeSummary();
+  return `<section class="card outcomes-dashboard-card" id="doctorOutcomesSection">
+    <div class="card-head">
+      <div>
+        <h2 class="section-title">Resultados y adherencia</h2>
+        <div class="muted">Vista descriptiva de evolución y participación de pacientes vinculados.</div>
+      </div>
+      <span class="clinical-disclaimer">Apoyo al seguimiento · no diagnóstico</span>
+    </div>
+
+    <div class="outcome-kpis">
+      <div class="outcome-kpi"><span>Pacientes activos</span><strong>${s.patients}</strong><small>Cartera vinculada</small></div>
+      <div class="outcome-kpi"><span>Cambio peso promedio</span><strong>${s.avgWeightPct===null?'—':outcomeSigned(s.avgWeightPct,'%',1)}</strong><small>Desde inicio del plan</small></div>
+      <div class="outcome-kpi"><span>Reducción ≥5%</span><strong>${s.achieved5}</strong><small>Pacientes</small></div>
+      <div class="outcome-kpi"><span>Adherencia registros</span><strong>${s.avgAdherence===null?'—':outcomePercent(s.avgAdherence,0)}</strong><small>Promedio últimas 4 sem.</small></div>
+      <div class="outcome-kpi"><span>Asistencia controles</span><strong>${s.avgAttendance===null?'—':outcomePercent(s.avgAttendance,0)}</strong><small>Últimos 90 días</small></div>
+      <div class="outcome-kpi"><span>Cambio cintura promedio</span><strong>${s.avgWaist===null?'—':outcomeSigned(s.avgWaist,' cm',1)}</strong><small>Desde línea basal</small></div>
+    </div>
+
+    <div class="outcomes-grid">
+      <div class="outcomes-visual-card">
+        <div class="outcomes-subhead">
+          <div><strong>Cambio de peso por paciente</strong><span>Variación porcentual desde el inicio</span></div>
+        </div>
+        ${outcomeWeightBarsMarkup()}
+      </div>
+
+      <div class="outcomes-visual-card">
+        <div class="outcomes-subhead">
+          <div><strong>Lectura de indicadores</strong><span>Criterios transparentes utilizados por BodyCare</span></div>
+        </div>
+        <div class="outcome-method-list">
+          <div><b>Adherencia de registros</b><span>Semanas con ≥1 registro durante las últimas 4 semanas.</span></div>
+          <div><b>Asistencia</b><span>Completados ÷ (completados + no asistió) en los últimos 90 días.</span></div>
+          <div><b>Reducción ≥5%</b><span>Comparación entre peso inicial y último peso registrado.</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="outcome-patient-toolbar">
+      <div class="outcome-filter-buttons">
+        <button type="button" class="outcome-filter-btn ${doctorOutcomeFilter==='ALL'?'active':''}" data-outcome-filter="ALL">Todos</button>
+        <button type="button" class="outcome-filter-btn ${doctorOutcomeFilter==='PRIORITY'?'active':''}" data-outcome-filter="PRIORITY">Prioridad</button>
+        <button type="button" class="outcome-filter-btn ${doctorOutcomeFilter==='ACHIEVED5'?'active':''}" data-outcome-filter="ACHIEVED5">≥5%</button>
+        <button type="button" class="outcome-filter-btn ${doctorOutcomeFilter==='LOW_ADHERENCE'?'active':''}" data-outcome-filter="LOW_ADHERENCE">Baja adherencia</button>
+      </div>
+      <input id="doctorOutcomeSearch" class="outcome-search" type="search" placeholder="Buscar paciente" value="${esc(doctorOutcomeSearch)}">
+    </div>
+
+    <div id="doctorOutcomesPatientList">${doctorOutcomesMarkup()}</div>
+  </section>`;
+}
+
+function bindDoctorOutcomes(){
+  document.querySelectorAll('[data-outcome-filter]').forEach(btn=>btn.addEventListener('click',()=>{
+    doctorOutcomeFilter=btn.dataset.outcomeFilter||'ALL';
+    renderDoctorOutcomes();
+  }));
+
+  document.getElementById('doctorOutcomeSearch')?.addEventListener('input',e=>{
+    doctorOutcomeSearch=e.target.value||'';
+    renderDoctorOutcomePatientList();
+  });
+
+  document.querySelectorAll('[data-open-outcome-patient]').forEach(btn=>{
+    btn.addEventListener('click',()=>openDoctorPatient(btn.dataset.openOutcomePatient));
+  });
+}
+
+function renderDoctorOutcomePatientList(){
+  const list=document.getElementById('doctorOutcomesPatientList');
+  if(!list)return;
+  list.innerHTML=doctorOutcomesMarkup();
+  list.querySelectorAll('[data-open-outcome-patient]').forEach(btn=>{
+    btn.addEventListener('click',()=>openDoctorPatient(btn.dataset.openOutcomePatient));
+  });
+}
+
+function renderDoctorOutcomes(){
+  const old=document.getElementById('doctorOutcomesSection');
+  if(!old)return;
+  const temp=document.createElement('div');
+  temp.innerHTML=doctorOutcomesSectionMarkup().trim();
+  const fresh=temp.firstElementChild;
+  if(fresh){
+    old.replaceWith(fresh);
+    bindDoctorOutcomes();
+  }
+}
+
+async function syncDoctorOutcomes(renderUI=true){
+  if(!hasRole('DOCTOR'))return;
+  try{
+    doctorOutcomes=await dbRpc('bodycare_get_doctor_outcomes',{p_control_window_days:90})||[];
+    if(renderUI&&!doctorPatientDetail)renderDoctorOutcomes();
+  }catch(err){
+    console.warn('Outcome sync failed',err);
+  }
+}
+
+function patientOutcomeSummaryMarkup(patientId){
+  const row=outcomeForPatient(patientId);
+  if(!row)return '';
+  const goalPct=goalProgressPct(row);
+  return `<section class="card patient-outcome-summary">
+    <div class="card-head">
+      <div>
+        <h2 class="section-title">Resumen de evolución</h2>
+        <div class="muted">Indicadores descriptivos del seguimiento de este paciente.</div>
+      </div>
+      ${row.achieved_5pct===true?'<span class="outcome-achievement">≥5% reducción</span>':''}
+    </div>
+    <div class="patient-outcome-grid">
+      <div><span>Cambio de peso</span><strong>${outcomeSigned(row.weight_change_kg,' kg',2)}</strong><small>${outcomeSigned(row.weight_change_pct,'%',1)}</small></div>
+      <div><span>Cambio de cintura</span><strong>${outcomeSigned(row.waist_change_cm,' cm',1)}</strong><small>Desde línea basal</small></div>
+      <div><span>Adherencia 4 semanas</span><strong>${outcomePercent(row.record_adherence_pct_28d,0)}</strong><small>${Number(row.records_28d||0)} semana${Number(row.records_28d||0)===1?'':'s'} con registro</small></div>
+      <div><span>Asistencia 90 días</span><strong>${outcomePercent(row.attendance_pct,0)}</strong><small>${Number(row.completed_controls||0)} completados · ${Number(row.no_show_controls||0)} inasist.</small></div>
+      <div><span>Avance hacia meta</span><strong>${goalPct===null?'—':outcomePercent(goalPct,0)}</strong><small>${row.target_weight?`Meta ${kg(row.target_weight)}`:'Sin peso meta definido'}</small></div>
+      <div><span>Próximo control</span><strong class="patient-next-control">${esc(nextControlText(row.next_control_at))}</strong><small>${row.next_control_at?'Agenda activa':'Sin control futuro'}</small></div>
+    </div>
+    <div class="clinical-settings-note">Estos indicadores apoyan la revisión longitudinal y no constituyen por sí solos una conclusión clínica.</div>
+  </section>`;
+}
+
 async function syncDoctorHomeData(){
   if(!hasRole('DOCTOR')||doctorPatientDetail)return;
   await Promise.allSettled([
     syncDoctorAgenda(false),
-    syncDoctorPriorities(false)
+    syncDoctorPriorities(false),
+    syncDoctorOutcomes(false)
   ]);
   if(activePortal==='DOCTOR'&&!doctorPatientDetail&&!userIsTyping()){
     renderDoctorAgenda();
     renderDoctorPriorityDashboard();
+    renderDoctorOutcomes();
   }
 }
 
@@ -4422,6 +4711,8 @@ function doctorView(){
         <div id="doctorAgendaList">${doctorAgendaMarkup()}</div>
       </section>
 
+      ${doctorOutcomesSectionMarkup()}
+
       <section class="priority-summary">
         <div class="priority-summary-card red"><span>Requiere atención</span><strong id="priorityRedCount">${counts.red}</strong></div>
         <div class="priority-summary-card orange"><span>Revisar</span><strong id="priorityOrangeCount">${counts.orange}</strong></div>
@@ -4474,6 +4765,7 @@ function doctorView(){
   bindCommonHeader();
   document.getElementById('doctorProfileForm')?.addEventListener('submit',saveDoctorProfile);
   document.getElementById('doctorAlertSettingsForm')?.addEventListener('submit',saveDoctorAlertSettings);
+  bindDoctorOutcomes();
 
   document.querySelectorAll('[data-agenda-mode]').forEach(btn=>btn.addEventListener('click',()=>{
     doctorAgendaMode=btn.dataset.agendaMode==='WEEK'?'WEEK':'TODAY';
@@ -4538,6 +4830,7 @@ function buildStandaloneChart(rows,p,field,goal=null,yLabel='',suffix=''){
 async function openDoctorPatient(patientId){
   try{
     try{doctorPriorities=await dbRpc('bodycare_get_doctor_priorities',{})||[]}catch{}
+    try{doctorOutcomes=await dbRpc('bodycare_get_doctor_outcomes',{p_control_window_days:90})||[]}catch{}
     const p=(await dbGet(`profiles?select=*&user_id=eq.${encodeURIComponent(patientId)}&limit=1`))?.[0];
     if(!p)throw new Error('No se encontró la ficha del paciente.');
     const recs=await dbGet(`weight_records?select=*&user_id=eq.${encodeURIComponent(patientId)}&deleted_at=is.null&order=measured_on.asc,created_at.asc`)||[];
@@ -4623,6 +4916,7 @@ function doctorPatientDetailView(){
       <h2 class="section-title">${esc(p.full_name)}</h2><div class="muted">Seguimiento desde ${fmt(p.start_date)}</div>
     </section>
     ${doctorAlertPanelMarkup()}
+    ${patientOutcomeSummaryMarkup(p.user_id)}
     <section class="metrics">
       <div class="metric"><span>Peso inicial</span><strong>${kg(p.initial_weight_kg)}</strong></div>
       <div class="metric"><span>Peso actual</span><strong>${latest?kg(latest.weight_kg):'—'}</strong></div>
@@ -5198,7 +5492,7 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){
