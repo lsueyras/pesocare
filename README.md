@@ -506,3 +506,12 @@ https://lsueyras.github.io/pesocare/
 - Médico define frecuencia entre 3 y 14 días.
 - Paciente configura preferencias en Recordatorios BodyCare.
 - Deep links a Controles o Registrar peso.
+
+
+## BodyCare V20.1 — Persistencia robusta de preferencias
+- Cada interruptor muestra Guardando / Guardado.
+- Los controles se bloquean durante la escritura para evitar cambios concurrentes.
+- Después de guardar, BodyCare relee `notification_preferences` desde Supabase.
+- La interfaz se reconcilia con el valor autoritativo de la base.
+- La sincronización de la tarjeta no puede sobrescribir un cambio mientras está guardándose.
+- `bodycare_get_patient_reminder_plan` ahora crea la fila de preferencias por defecto si falta y devuelve los tres valores de recordatorios.

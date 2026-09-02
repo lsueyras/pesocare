@@ -2364,3 +2364,35 @@ input[data-date-cl].date-invalid{
 .reminder-preference-row strong{display:block;color:#344054;font-size:.8rem}.reminder-preference-row small{display:block;margin-top:2px;color:#667085;font-size:.7rem;line-height:1.35}
 .engagement-note{margin-top:10px;padding:9px 10px;border-radius:10px;background:#eff8ff;color:#175cd3;font-size:.7rem;line-height:1.4}
 @media(max-width:600px){.engagement-summary{grid-template-columns:1fr}}
+
+/* BodyCare V20.1 — persistencia autoritativa de recordatorios */
+.reminder-save-row{
+  display:flex;
+  justify-content:flex-end;
+  margin-top:8px;
+}
+.reminder-save-status{
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:3px 8px;
+  border-radius:999px;
+  font-size:.68rem;
+  font-weight:750;
+}
+.reminder-save-status.saved{
+  background:#ecfdf3;
+  color:#027a48;
+}
+.reminder-save-status.saving{
+  background:#fffaeb;
+  color:#b54708;
+}
+.reminder-save-status.error{
+  background:#fef3f2;
+  color:#b42318;
+}
+.reminder-preference-row input:disabled{
+  opacity:.55;
+  cursor:wait;
+}
