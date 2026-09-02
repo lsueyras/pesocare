@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='20.2';
+const APP_VERSION='21.0';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -21,6 +21,7 @@ let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
 let doctorPriorities=[], doctorAlertSettings=null;
 let doctorAgenda=[], doctorAgendaMode='TODAY', doctorAgendaSyncing=false;
 let doctorOutcomes=[], doctorOutcomeFilter='ALL', doctorOutcomeSearch='';
+let doctorTimelineFilter='ALL', doctorTimelineLastSync=0;
 let adminUsers=[], adminTickets=[], adminLoaded=false;
 let editingPrescriptionId=null;
 let editingWeightRecordId=null;
@@ -3945,7 +3946,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v20.2'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v21.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -4221,6 +4222,7 @@ async function syncDoctorPrescriptions(patientId){
 
 async function syncDoctorMedicalData(patientId){
   await Promise.allSettled([syncDoctorMessages(patientId),syncDoctorPrescriptions(patientId),syncDoctorControls(patientId)]);
+  await syncDoctorTimeline(true,false);
 
   if(doctorPatientDetail?.profile?.user_id===patientId){
     notifications.filter(n=>
@@ -4918,6 +4920,7 @@ async function reviewDoctorAlert(id){
     await dbRpc('bodycare_review_alert',{p_alert_id:id});
     await syncDoctorPriorities(false);
     renderDoctorAlertPanel();
+    await syncDoctorTimeline(true,true);
     showToast('Alerta revisada','La alerta quedó registrada como revisada.','CLINICAL_ALERT');
   }catch(err){
     alert('No fue posible marcar la alerta como revisada: '+err.message);
@@ -5134,6 +5137,75 @@ function buildStandaloneChart(rows,p,field,goal=null,yLabel='',suffix=''){
   return svg;
 }
 
+
+function timelineEventIcon(type){
+  const icons={WEIGHT_RECORD:'⚖️',CONTROL:'🗓️',PRESCRIPTION:'📋',CLINICAL_ALERT:'⚠️',ALERT_REVIEWED:'✓'};
+  return icons[type]||'•';
+}
+function timelineEventGroup(type){
+  if(type==='WEIGHT_RECORD')return 'WEIGHT';
+  if(type==='CONTROL')return 'CONTROL';
+  if(type==='PRESCRIPTION')return 'PRESCRIPTION';
+  if(['CLINICAL_ALERT','ALERT_REVIEWED'].includes(type))return 'ALERT';
+  return 'OTHER';
+}
+function timelineFilterLabel(value){return ({ALL:'Todo',WEIGHT:'Registros',CONTROL:'Controles',PRESCRIPTION:'Indicaciones',ALERT:'Alertas'})[value]||'Todo'}
+function timelineEventDate(value){return value?formatDateTime(value):'—'}
+function timelineEventMarkup(item){
+  const group=timelineEventGroup(item.event_type), severity=String(item.severity||'').toLowerCase();
+  return `<div class="clinical-timeline-item ${group.toLowerCase()} ${severity}">
+    <div class="clinical-timeline-rail"><span class="clinical-timeline-icon">${timelineEventIcon(item.event_type)}</span><i></i></div>
+    <div class="clinical-timeline-content"><div class="clinical-timeline-head"><div><strong>${esc(item.title||'Evento de seguimiento')}</strong><span>${esc(timelineEventDate(item.event_at))}</span></div>
+    <div class="clinical-timeline-tags"><span class="timeline-type-chip">${esc(timelineFilterLabel(group))}</span>${item.severity?`<span class="timeline-severity-chip ${severity}">${esc(item.severity)}</span>`:''}</div></div>
+    ${item.detail?`<div class="clinical-timeline-detail">${esc(item.detail)}</div>`:''}</div></div>`;
+}
+function filteredDoctorTimeline(){const rows=doctorPatientDetail?.timeline||[];return doctorTimelineFilter==='ALL'?rows:rows.filter(x=>timelineEventGroup(x.event_type)===doctorTimelineFilter)}
+function doctorTimelineMarkup(){const rows=filteredDoctorTimeline();return rows.length?`<div class="clinical-timeline">${rows.map(timelineEventMarkup).join('')}</div>`:`<div class="empty-state">No hay eventos para el filtro ${esc(timelineFilterLabel(doctorTimelineFilter).toLowerCase())}.</div>`}
+function renderDoctorTimeline(){
+  document.querySelectorAll('[data-timeline-filter]').forEach(b=>b.classList.toggle('active',b.dataset.timelineFilter===doctorTimelineFilter));
+  const list=document.getElementById('doctorClinicalTimelineList');if(list)list.innerHTML=doctorTimelineMarkup();
+  const status=document.getElementById('doctorTimelineStatus');if(status){status.textContent='Actualizado';status.classList.remove('syncing')}
+}
+function bindDoctorTimeline(){
+  document.querySelectorAll('[data-timeline-filter]').forEach(btn=>btn.addEventListener('click',()=>{doctorTimelineFilter=btn.dataset.timelineFilter||'ALL';renderDoctorTimeline()}));
+  document.getElementById('refreshDoctorTimeline')?.addEventListener('click',()=>syncDoctorTimeline(true,true));
+}
+async function syncDoctorTimeline(renderUI=true,force=false){
+  const patientId=doctorPatientDetail?.profile?.user_id;if(!hasRole('DOCTOR')||!patientId)return;
+  if(!force&&Date.now()-doctorTimelineLastSync<12000)return;
+  const st=document.getElementById('doctorTimelineStatus');if(st){st.textContent='Actualizando…';st.classList.add('syncing')}
+  try{const rows=await dbRpc('bodycare_get_patient_timeline',{p_patient_user_id:patientId,p_limit:160})||[];
+    if(doctorPatientDetail?.profile?.user_id===patientId){doctorPatientDetail.timeline=rows;doctorTimelineLastSync=Date.now();if(renderUI)renderDoctorTimeline()}}
+  catch(err){console.warn('Clinical timeline sync failed',err);if(st){st.textContent='No se pudo actualizar';st.classList.remove('syncing')}}
+}
+function doctorTimelineSectionMarkup(){return `<section class="card clinical-timeline-card" id="doctorClinicalTimelineSection">
+  <div class="card-head"><div><h2 class="section-title">Timeline clínico</h2><div class="muted">Historia longitudinal consolidada de registros, controles, indicaciones y alertas.</div></div><span id="doctorTimelineStatus" class="agenda-sync-status">Actualizado</span></div>
+  <div class="timeline-toolbar"><div class="timeline-filter-buttons">${['ALL','WEIGHT','CONTROL','PRESCRIPTION','ALERT'].map(v=>`<button type="button" class="timeline-filter-btn ${doctorTimelineFilter===v?'active':''}" data-timeline-filter="${v}">${timelineFilterLabel(v)}</button>`).join('')}</div><button type="button" id="refreshDoctorTimeline" class="secondary small-btn">Actualizar</button></div>
+  <div id="doctorClinicalTimelineList">${doctorTimelineMarkup()}</div></section>`}
+function reportMetricCell(label,value,sub=''){return `<div class="report-metric"><span>${esc(label)}</span><strong>${esc(value||'—')}</strong>${sub?`<small>${esc(sub)}</small>`:''}</div>`}
+function buildDoctorLongitudinalReport(){
+  if(!doctorPatientDetail)return '';
+  const d=doctorPatientDetail,p=d.profile,recs=[...(d.records||[])].sort((a,b)=>String(a.measured_on).localeCompare(String(b.measured_on))),latest=recs.at(-1)||null;
+  const latestWaist=[...recs].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined)||null;
+  const outcome=outcomeForPatient(p.user_id),priority=priorityForPatient(p.user_id),timeline=(d.timeline||[]).slice(0,60),activeRx=(d.prescriptions||[]).filter(rx=>!rx.deleted_at);
+  const completed=timeline.filter(x=>x.event_type==='CONTROL'&&x.metadata?.status==='COMPLETED');
+  const logoUrl=new URL(BRAND_LOGO_URL,APP_URL).href;
+  const reportDate=new Intl.DateTimeFormat('es-CL',{timeZone:'America/Santiago',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date());
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BodyCare · Informe longitudinal · ${esc(p.full_name)}</title><style>
+  *{box-sizing:border-box}body{margin:0;background:#f4f6f8;color:#182230;font-family:Arial,Helvetica,sans-serif}.page{max-width:980px;margin:20px auto;background:#fff;padding:30px;box-shadow:0 8px 30px rgba(16,24,40,.10)}
+  .top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;border-bottom:2px solid #175cd3;padding-bottom:18px}.brand{display:flex;align-items:center;gap:14px}.brand img{width:62px;height:62px;object-fit:contain}h1{margin:0;font-size:24px}.sub{color:#667085;margin-top:4px;font-size:13px}.print-actions{display:flex;gap:8px}.print-actions button{border:0;border-radius:8px;padding:9px 12px;cursor:pointer}.primary{background:#175cd3;color:#fff}.secondary{background:#eef2f6;color:#344054}h2{font-size:16px;margin:24px 0 10px}.box{border:1px solid #e4e7ec;border-radius:12px;padding:14px;margin-top:12px}.patient-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.report-metric{border:1px solid #e4e7ec;border-radius:10px;padding:10px;background:#f9fafb}.report-metric span{display:block;color:#667085;font-size:11px}.report-metric strong{display:block;margin-top:4px;font-size:15px}.report-metric small{display:block;margin-top:3px;color:#667085;font-size:10px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{padding:8px;border-bottom:1px solid #eaecf0;text-align:left;vertical-align:top}th{background:#f9fafb;color:#475467}.rx{padding:9px 0;border-bottom:1px solid #eaecf0}.rx:last-child{border-bottom:0}.rx strong{display:block}.rx span{font-size:11px;color:#667085}.event{display:grid;grid-template-columns:90px 1fr;gap:12px;padding:9px 0;border-bottom:1px solid #f2f4f7}.event:last-child{border-bottom:0}.event time{font-size:10px;color:#667085}.event strong{font-size:12px}.event p{margin:3px 0 0;font-size:10.5px;color:#475467;line-height:1.4}.disclaimer{margin-top:24px;padding:12px;border-radius:10px;background:#fffaeb;color:#7a2e0e;font-size:10.5px;line-height:1.45}.footer{margin-top:22px;padding-top:12px;border-top:1px solid #e4e7ec;color:#98a2b3;font-size:10px;text-align:center}
+  @media(max-width:720px){.page{margin:0;padding:18px}.metric-grid,.patient-grid{grid-template-columns:1fr 1fr}.print-actions{display:none}}@media print{body{background:#fff}.page{max-width:none;margin:0;box-shadow:none;padding:12mm}.print-actions{display:none}.box,.report-metric{break-inside:avoid}@page{size:A4;margin:10mm}}
+  </style></head><body><div class="page"><div class="top"><div class="brand"><img src="${logoUrl}" alt="BodyCare"><div><h1>Informe longitudinal de seguimiento</h1><div class="sub">BodyCare · Salud y progreso</div><div class="sub">Generado ${esc(reportDate)}</div></div></div><div class="print-actions"><button class="primary" onclick="window.print()">Imprimir / Guardar PDF</button><button class="secondary" onclick="window.close()">Cerrar</button></div></div>
+  <h2>Paciente y profesional</h2><div class="box patient-grid">${reportMetricCell('Paciente',p.full_name)}${reportMetricCell('Inicio seguimiento',fmt(p.start_date))}${reportMetricCell('Duración plan',`${p.planned_weeks} semanas`)}${reportMetricCell('Profesional',doctorProfile?.display_name||account?.display_name||'Médico')}${reportMetricCell('Especialidad',doctorProfile?.specialty||'—')}${reportMetricCell('Centro / consulta',doctorProfile?.clinic_name||'—')}</div>
+  <h2>Resumen de evolución</h2><div class="metric-grid">${reportMetricCell('Peso inicial',kg(p.initial_weight_kg))}${reportMetricCell('Peso actual',latest?kg(latest.weight_kg):'—',outcome?`${outcomeSigned(outcome.weight_change_kg,' kg',2)} · ${outcomeSigned(outcome.weight_change_pct,'%',1)}`:'—')}${reportMetricCell('Peso meta',p.target_weight_kg?kg(p.target_weight_kg):'—')}${reportMetricCell('Cintura actual',latestWaist?cm(latestWaist.abdominal_circumference_cm):'—',outcome?outcomeSigned(outcome.waist_change_cm,' cm',1):'—')}${reportMetricCell('Adherencia 4 semanas',outcome?outcomePercent(outcome.record_adherence_pct_28d,0):'—')}${reportMetricCell('Asistencia 90 días',outcome?outcomePercent(outcome.attendance_pct,0):'—')}${reportMetricCell('Prioridad actual',priorityLabel(priority.priority))}${reportMetricCell('Próximo control',outcome?nextControlText(outcome.next_control_at):'Sin próximo control')}</div>
+  <h2>Indicaciones vigentes</h2><div class="box">${activeRx.length?activeRx.map(rx=>`<div class="rx"><strong>${esc(rx.medication_name)} · ${esc(rx.dose_text)}</strong><span>${esc(rx.frequency_text)}${rx.duration_text?` · ${esc(rx.duration_text)}`:''}${rx.route_text?` · ${esc(rx.route_text)}`:''}</span>${rx.instructions?`<span style="display:block;margin-top:3px">${esc(rx.instructions)}</span>`:''}</div>`).join(''):'<div class="sub">Sin indicaciones activas registradas en BodyCare.</div>'}</div>
+  <h2>Controles completados</h2><div class="box">${completed.length?`<table><thead><tr><th>Fecha</th><th>Resumen compartido</th></tr></thead><tbody>${completed.map(c=>`<tr><td>${esc(timelineEventDate(c.event_at))}</td><td>${esc(c.metadata?.outcome_summary||'Sin resumen registrado')}</td></tr>`).join('')}</tbody></table>`:'<div class="sub">Aún no hay controles completados con resumen.</div>'}</div>
+  <h2>Historial de registros</h2><div class="box">${recs.length?`<table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Cintura</th></tr></thead><tbody>${recs.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOfFor(r.measured_on,p)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table>`:'<div class="sub">Sin registros.</div>'}</div>
+  <h2>Timeline reciente</h2><div class="box">${timeline.length?timeline.map(item=>`<div class="event"><time>${esc(timelineEventDate(item.event_at))}</time><div><strong>${esc(item.title||'Evento')}</strong>${item.detail?`<p>${esc(item.detail)}</p>`:''}</div></div>`).join(''):'<div class="sub">Sin eventos disponibles.</div>'}</div>
+  <div class="disclaimer">Este informe resume información registrada en BodyCare y sirve como apoyo al seguimiento longitudinal. No constituye por sí solo diagnóstico, indicación terapéutica ni reemplaza la evaluación y el juicio clínico del profesional tratante. Las indicaciones farmacológicas mostradas corresponden al registro interno de BodyCare; la integración de receta electrónica legal permanece pendiente.</div><div class="footer">BodyCare · Informe longitudinal de seguimiento</div></div></body></html>`;
+}
+function generateDoctorLongitudinalReport(){if(!doctorPatientDetail)return;const win=window.open('','_blank');if(!win){alert('El navegador bloqueó la apertura del informe. Permite ventanas emergentes para BodyCare e inténtalo nuevamente.');return}win.document.open();win.document.write(buildDoctorLongitudinalReport());win.document.close()}
+
 async function openDoctorPatient(patientId){
   try{
     try{doctorPriorities=await dbRpc('bodycare_get_doctor_priorities',{})||[]}catch{}
@@ -5153,7 +5225,9 @@ async function openDoctorPatient(patientId){
       p_doctor_user_id:currentUser.id,
       p_patient_user_id:patientId
     })||[]);
-    doctorPatientDetail={profile:p,records:recs,prescriptions,messages,controls};
+    const timeline=(await dbRpc('bodycare_get_patient_timeline',{p_patient_user_id:patientId,p_limit:160})||[]);
+    doctorTimelineLastSync=Date.now();
+    doctorPatientDetail={profile:p,records:recs,prescriptions,messages,controls,timeline};
     const matching=notifications.filter(n=>
       isActionableUnread(n) &&
       DOCTOR_PATIENT_CONTEXT_NOTIFICATION_TYPES.includes(n.type) &&
@@ -5218,12 +5292,10 @@ function doctorPatientDetailView(){
   const waist=[...recs].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined);
   const editing=d.prescriptions.find(rx=>rx.id===editingPrescriptionId)||null;
   app.innerHTML=shell(`${header()}
-    <section class="card">
-      <button class="linkbtn" id="backPatients">← Mis pacientes</button>
-      <h2 class="section-title">${esc(p.full_name)}</h2><div class="muted">Seguimiento desde ${fmt(p.start_date)}</div>
-    </section>
+    <section class="card"><div class="doctor-patient-header"><div><button class="linkbtn" id="backPatients">← Mis pacientes</button><h2 class="section-title">${esc(p.full_name)}</h2><div class="muted">Seguimiento desde ${fmt(p.start_date)}</div></div><button type="button" class="primary" id="doctorLongitudinalReport">Generar informe</button></div></section>
     ${doctorAlertPanelMarkup()}
     ${patientOutcomeSummaryMarkup(p.user_id)}
+    ${doctorTimelineSectionMarkup()}
     <section class="metrics">
       <div class="metric"><span>Peso inicial</span><strong>${kg(p.initial_weight_kg)}</strong></div>
       <div class="metric"><span>Peso actual</span><strong>${latest?kg(latest.weight_kg):'—'}</strong></div>
@@ -5281,6 +5353,8 @@ function doctorPatientDetailView(){
     </section>`);
   bindCommonHeader();
   bindDoctorAlertPanel();
+  bindDoctorTimeline();
+  document.getElementById('doctorLongitudinalReport')?.addEventListener('click',generateDoctorLongitudinalReport);
   renderDoctorMessageThread();
   renderDoctorPrescriptionList();
   renderDoctorControls();
@@ -5288,7 +5362,7 @@ function doctorPatientDetailView(){
   document.getElementById('doctorControlForm')?.addEventListener('submit',createDoctorControl);
   document.getElementById('doctorControlSyncStatus')?.addEventListener('click',()=>syncDoctorControls(p.user_id));
   bindDateCLInputs();
-  document.getElementById('backPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetail=null;doctorView()});
+  document.getElementById('backPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorTimelineFilter='ALL';doctorTimelineLastSync=0;doctorPatientDetail=null;doctorView()});
   bindDoctorPrescriptionForm();
   document.getElementById('doctorPrescriptionSyncStatus')?.addEventListener('click',()=>syncDoctorPrescriptions(p.user_id));
   document.getElementById('doctorMessageForm')?.addEventListener('submit',sendDoctorMessage);
@@ -5367,6 +5441,7 @@ async function saveDoctorPrescription(e){
     );
 
     await syncDoctorPrescriptions(p.user_id);
+    await syncDoctorTimeline(true,true);
   }catch(err){
     setPrescriptionSyncStatus('doctor','error','No se pudo guardar la indicación. Toca aquí para reintentar.');
     alert(err.message);
@@ -5409,6 +5484,7 @@ async function deleteDoctorPrescription(id){
     syncDoctorPrescriptions(doctorPatientDetail.profile.user_id).catch(err=>{
       console.warn('Prescription reconcile after delete',err);
     });
+    syncDoctorTimeline(true,true).catch(err=>console.warn('Timeline reconcile after prescription delete',err));
   }catch(err){
     // Restore UI if backend deletion failed.
     doctorPatientDetail.prescriptions=previousPrescriptions;
@@ -5800,7 +5876,7 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){

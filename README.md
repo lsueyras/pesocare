@@ -527,3 +527,12 @@ https://lsueyras.github.io/pesocare/
 - La sincronización del plan ya no modifica las preferencias.
 - Un refresco Realtime no puede pisar cambios sin guardar.
 - Backend inicializa preferencias para pacientes existentes.
+
+
+## BodyCare V21 — Timeline clínico + Informe longitudinal
+- Timeline médico consolidado: registros, controles, indicaciones y alertas.
+- Filtros Todo / Registros / Controles / Indicaciones / Alertas.
+- RPC segura `bodycare_get_patient_timeline(uuid, integer)`.
+- Informe longitudinal imprimible / Guardar como PDF desde navegador.
+- Incluye evolución, adherencia, asistencia, prioridad, próximo control, indicaciones vigentes, controles completados, historial y timeline reciente.
+- Disclaimer explícito de apoyo al seguimiento, no diagnóstico.
