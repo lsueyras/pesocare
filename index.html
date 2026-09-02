@@ -13,7 +13,7 @@
   <title>BodyCare · Salud y progreso</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./apple-touch-icon.png" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=21-bodycare">
+  <link rel="stylesheet" href="./styles.css?v=21.2-bodycare">
   <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 </head>
 <body>
@@ -27,13 +27,13 @@
       </section>
     </main>
   </div>
-  <script defer src="./app.js?v=21-bodycare"></script>
+  <script defer src="./app.js?v=21.2-bodycare"></script>
 
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', async () => {
         try {
-          const registration = await navigator.serviceWorker.register('./sw.js?v=21-bodycare', { updateViaCache: 'none' });
+          const registration = await navigator.serviceWorker.register('./sw.js?v=21.2-bodycare', { updateViaCache: 'none' });
           await registration.update();
         } catch (e) {
           console.warn('BodyCare service worker update:', e);

@@ -536,3 +536,20 @@ https://lsueyras.github.io/pesocare/
 - Informe longitudinal imprimible / Guardar como PDF desde navegador.
 - Incluye evolución, adherencia, asistencia, prioridad, próximo control, indicaciones vigentes, controles completados, historial y timeline reciente.
 - Disclaimer explícito de apoyo al seguimiento, no diagnóstico.
+
+
+## BodyCare V21.1 — Timeline al final de la ficha
+- Timeline clínico movido a la última sección del paciente.
+- La parte superior queda para información accionable y operativa.
+- Timeline queda como información de consulta longitudinal.
+- Sin cambios de backend.
+
+
+## BodyCare V21.2 — Timeline opcional en informe
+- `Generar informe` pregunta si se desea incluir el Timeline clínico.
+- Opciones:
+  - Generar con Timeline;
+  - Generar sin Timeline;
+  - Cancelar.
+- El informe sin Timeline mantiene todos los demás bloques clínico-operativos.
+- Sin cambios de backend.

@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='21.0';
+const APP_VERSION='21.2';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -3946,7 +3946,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v21.0'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v21.2'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -5183,7 +5183,7 @@ function doctorTimelineSectionMarkup(){return `<section class="card clinical-tim
   <div class="timeline-toolbar"><div class="timeline-filter-buttons">${['ALL','WEIGHT','CONTROL','PRESCRIPTION','ALERT'].map(v=>`<button type="button" class="timeline-filter-btn ${doctorTimelineFilter===v?'active':''}" data-timeline-filter="${v}">${timelineFilterLabel(v)}</button>`).join('')}</div><button type="button" id="refreshDoctorTimeline" class="secondary small-btn">Actualizar</button></div>
   <div id="doctorClinicalTimelineList">${doctorTimelineMarkup()}</div></section>`}
 function reportMetricCell(label,value,sub=''){return `<div class="report-metric"><span>${esc(label)}</span><strong>${esc(value||'—')}</strong>${sub?`<small>${esc(sub)}</small>`:''}</div>`}
-function buildDoctorLongitudinalReport(){
+function buildDoctorLongitudinalReport(includeTimeline=true){
   if(!doctorPatientDetail)return '';
   const d=doctorPatientDetail,p=d.profile,recs=[...(d.records||[])].sort((a,b)=>String(a.measured_on).localeCompare(String(b.measured_on))),latest=recs.at(-1)||null;
   const latestWaist=[...recs].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined)||null;
@@ -5201,10 +5201,67 @@ function buildDoctorLongitudinalReport(){
   <h2>Indicaciones vigentes</h2><div class="box">${activeRx.length?activeRx.map(rx=>`<div class="rx"><strong>${esc(rx.medication_name)} · ${esc(rx.dose_text)}</strong><span>${esc(rx.frequency_text)}${rx.duration_text?` · ${esc(rx.duration_text)}`:''}${rx.route_text?` · ${esc(rx.route_text)}`:''}</span>${rx.instructions?`<span style="display:block;margin-top:3px">${esc(rx.instructions)}</span>`:''}</div>`).join(''):'<div class="sub">Sin indicaciones activas registradas en BodyCare.</div>'}</div>
   <h2>Controles completados</h2><div class="box">${completed.length?`<table><thead><tr><th>Fecha</th><th>Resumen compartido</th></tr></thead><tbody>${completed.map(c=>`<tr><td>${esc(timelineEventDate(c.event_at))}</td><td>${esc(c.metadata?.outcome_summary||'Sin resumen registrado')}</td></tr>`).join('')}</tbody></table>`:'<div class="sub">Aún no hay controles completados con resumen.</div>'}</div>
   <h2>Historial de registros</h2><div class="box">${recs.length?`<table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Cintura</th></tr></thead><tbody>${recs.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOfFor(r.measured_on,p)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table>`:'<div class="sub">Sin registros.</div>'}</div>
-  <h2>Timeline reciente</h2><div class="box">${timeline.length?timeline.map(item=>`<div class="event"><time>${esc(timelineEventDate(item.event_at))}</time><div><strong>${esc(item.title||'Evento')}</strong>${item.detail?`<p>${esc(item.detail)}</p>`:''}</div></div>`).join(''):'<div class="sub">Sin eventos disponibles.</div>'}</div>
+  ${includeTimeline?`<h2>Timeline clínico reciente</h2><div class="box">${timeline.length?timeline.map(item=>`<div class="event"><time>${esc(timelineEventDate(item.event_at))}</time><div><strong>${esc(item.title||'Evento')}</strong>${item.detail?`<p>${esc(item.detail)}</p>`:''}</div></div>`).join(''):'<div class="sub">Sin eventos disponibles.</div>'}</div>`:''}
   <div class="disclaimer">Este informe resume información registrada en BodyCare y sirve como apoyo al seguimiento longitudinal. No constituye por sí solo diagnóstico, indicación terapéutica ni reemplaza la evaluación y el juicio clínico del profesional tratante. Las indicaciones farmacológicas mostradas corresponden al registro interno de BodyCare; la integración de receta electrónica legal permanece pendiente.</div><div class="footer">BodyCare · Informe longitudinal de seguimiento</div></div></body></html>`;
 }
-function generateDoctorLongitudinalReport(){if(!doctorPatientDetail)return;const win=window.open('','_blank');if(!win){alert('El navegador bloqueó la apertura del informe. Permite ventanas emergentes para BodyCare e inténtalo nuevamente.');return}win.document.open();win.document.write(buildDoctorLongitudinalReport());win.document.close()}
+function closeDoctorReportOptions(){
+  document.getElementById('doctorReportOptionsOverlay')?.remove();
+}
+
+function openDoctorLongitudinalReport(includeTimeline){
+  if(!doctorPatientDetail)return;
+  closeDoctorReportOptions();
+
+  const win=window.open('','_blank');
+  if(!win){
+    alert('El navegador bloqueó la apertura del informe. Permite ventanas emergentes para BodyCare e inténtalo nuevamente.');
+    return;
+  }
+
+  win.document.open();
+  win.document.write(buildDoctorLongitudinalReport(includeTimeline));
+  win.document.close();
+}
+
+function generateDoctorLongitudinalReport(){
+  if(!doctorPatientDetail)return;
+
+  closeDoctorReportOptions();
+
+  document.body.insertAdjacentHTML('beforeend',`
+    <div class="report-options-overlay" id="doctorReportOptionsOverlay">
+      <section class="report-options-modal" role="dialog" aria-modal="true" aria-labelledby="doctorReportOptionsTitle">
+        <div class="report-options-icon">📄</div>
+        <h3 id="doctorReportOptionsTitle">Generar informe longitudinal</h3>
+        <p>¿Quieres incluir el Timeline clínico en el informe?</p>
+
+        <div class="report-options-explanation">
+          <div>
+            <strong>Con Timeline</strong>
+            <span>Incluye la secuencia reciente de registros, controles, indicaciones y alertas.</span>
+          </div>
+          <div>
+            <strong>Sin Timeline</strong>
+            <span>Genera un informe más breve manteniendo evolución, controles, indicaciones e historial.</span>
+          </div>
+        </div>
+
+        <div class="report-options-actions">
+          <button type="button" class="primary" id="reportWithTimeline">Generar con Timeline</button>
+          <button type="button" class="secondary" id="reportWithoutTimeline">Generar sin Timeline</button>
+          <button type="button" class="linkbtn report-cancel-btn" id="cancelReportOptions">Cancelar</button>
+        </div>
+      </section>
+    </div>
+  `);
+
+  document.getElementById('reportWithTimeline')?.addEventListener('click',()=>openDoctorLongitudinalReport(true));
+  document.getElementById('reportWithoutTimeline')?.addEventListener('click',()=>openDoctorLongitudinalReport(false));
+  document.getElementById('cancelReportOptions')?.addEventListener('click',closeDoctorReportOptions);
+  document.getElementById('doctorReportOptionsOverlay')?.addEventListener('click',e=>{
+    if(e.target?.id==='doctorReportOptionsOverlay')closeDoctorReportOptions();
+  });
+}
 
 async function openDoctorPatient(patientId){
   try{
@@ -5295,7 +5352,6 @@ function doctorPatientDetailView(){
     <section class="card"><div class="doctor-patient-header"><div><button class="linkbtn" id="backPatients">← Mis pacientes</button><h2 class="section-title">${esc(p.full_name)}</h2><div class="muted">Seguimiento desde ${fmt(p.start_date)}</div></div><button type="button" class="primary" id="doctorLongitudinalReport">Generar informe</button></div></section>
     ${doctorAlertPanelMarkup()}
     ${patientOutcomeSummaryMarkup(p.user_id)}
-    ${doctorTimelineSectionMarkup()}
     <section class="metrics">
       <div class="metric"><span>Peso inicial</span><strong>${kg(p.initial_weight_kg)}</strong></div>
       <div class="metric"><span>Peso actual</span><strong>${latest?kg(latest.weight_kg):'—'}</strong></div>
@@ -5350,7 +5406,9 @@ function doctorPatientDetailView(){
     <section class="card"><h2 class="section-title">Historial</h2>
       <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Circunferencia</th></tr></thead>
       <tbody>${recs.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOfFor(r.measured_on,p)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table></div>
-    </section>`);
+    </section>
+
+    ${doctorTimelineSectionMarkup()}`);
   bindCommonHeader();
   bindDoctorAlertPanel();
   bindDoctorTimeline();
