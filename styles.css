@@ -2348,3 +2348,19 @@ input[data-date-cl].date-invalid{
     gap:7px;
   }
 }
+
+/* BodyCare V20 — Smart Reminders & Engagement */
+.engagement-card{overflow:hidden}
+.engagement-status{display:inline-flex;align-items:center;min-height:26px;padding:4px 9px;border-radius:999px;background:#ecfdf3;color:#027a48;font-size:.7rem;font-weight:800}
+.engagement-summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:13px 0}
+.engagement-summary>div{min-width:0;padding:11px 12px;border:1px solid #e4e7ec;border-radius:12px;background:#f9fafb}
+.engagement-summary span{display:block;color:#667085;font-size:.7rem}
+.engagement-summary strong{display:block;margin-top:4px;color:#101828;font-size:.9rem;line-height:1.3}
+.engagement-summary small{display:block;margin-top:3px;color:#667085;font-size:.67rem}
+.reminder-preference-list{display:flex;flex-direction:column;border:1px solid #e4e7ec;border-radius:13px;overflow:hidden}
+.reminder-preference-row{display:grid;grid-template-columns:20px minmax(0,1fr);align-items:flex-start;gap:10px;margin:0;padding:11px 12px;border-bottom:1px solid #eaecf0;cursor:pointer}
+.reminder-preference-row:last-child{border-bottom:0}.reminder-preference-row:hover{background:#f9fafb}
+.reminder-preference-row input{width:18px !important;height:18px;margin:1px 0 0}
+.reminder-preference-row strong{display:block;color:#344054;font-size:.8rem}.reminder-preference-row small{display:block;margin-top:2px;color:#667085;font-size:.7rem;line-height:1.35}
+.engagement-note{margin-top:10px;padding:9px 10px;border-radius:10px;background:#eff8ff;color:#175cd3;font-size:.7rem;line-height:1.4}
+@media(max-width:600px){.engagement-summary{grid-template-columns:1fr}}

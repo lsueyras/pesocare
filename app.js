@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='19.0';
+const APP_VERSION='20.0';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -38,7 +38,17 @@ let doctorMessagesSyncing=false, doctorMessagesSyncPending=false;
 let doctorPrescriptionsSyncing=false, doctorPrescriptionsSyncPending=false;
 let patientControlsSyncing=false, patientControlsSyncPending=false;
 let doctorControlsSyncing=false, doctorControlsSyncPending=false;
-let notificationPreferences={push_enabled:true,messages:true,prescriptions:true,care_updates:true,support:true};
+let notificationPreferences={
+  push_enabled:true,
+  messages:true,
+  prescriptions:true,
+  care_updates:true,
+  support:true,
+  appointment_reminders:true,
+  confirmation_reminders:true,
+  record_reminders:true
+};
+let patientReminderPlan=null;
 let pushBrowserSubscription=null;
 let pushSettingsLoaded=false;
 let launchNotificationId=new URLSearchParams(location.search).get('notification');
@@ -1025,7 +1035,7 @@ function formatDateTime(value){
 const PATIENT_MEDICAL_NOTIFICATION_TYPES=[
   'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED',
   'NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED',
-  'NEW_CONTROL','CONTROL_CANCELLED','CONTROL_COMPLETED','CONTROL_NO_SHOW'
+  'NEW_CONTROL','CONTROL_CANCELLED','CONTROL_COMPLETED','CONTROL_NO_SHOW','CONTROL_CONFIRMATION_REMINDER','CONTROL_REMINDER','CONTROL_CONFIRMATION_REMINDER','CONTROL_REMINDER'
 ];
 
 const DOCTOR_PATIENT_CONTEXT_NOTIFICATION_TYPES=[
@@ -1119,7 +1129,10 @@ async function loadPushSettings(){
         messages:prefs[0].messages!==false,
         prescriptions:prefs[0].prescriptions!==false,
         care_updates:prefs[0].care_updates!==false,
-        support:prefs[0].support!==false
+        support:prefs[0].support!==false,
+        appointment_reminders:prefs[0].appointment_reminders!==false,
+        confirmation_reminders:prefs[0].confirmation_reminders!==false,
+        record_reminders:prefs[0].record_reminders!==false
       };
     }
     if('serviceWorker' in navigator){
@@ -1211,7 +1224,10 @@ async function persistPushPreferences(pushEnabled=notificationPreferences.push_e
       messages:saved.messages!==false,
       prescriptions:saved.prescriptions!==false,
       care_updates:saved.care_updates!==false,
-      support:saved.support!==false
+      support:saved.support!==false,
+      appointment_reminders:saved.appointment_reminders!==false,
+      confirmation_reminders:saved.confirmation_reminders!==false,
+      record_reminders:saved.record_reminders!==false
     };
   }
 }
@@ -1352,6 +1368,9 @@ function notificationIcon(type){
     CONTROL_CONFIRMED:'✅',
     CONTROL_COMPLETED:'🩺',
     CONTROL_NO_SHOW:'⚠️',
+    CONTROL_CONFIRMATION_REMINDER:'⏰',
+    CONTROL_REMINDER:'⏱️',
+    RECORD_REMINDER:'⚖️',
     CLINICAL_ALERT:'🔴',
     WEIGHT_UPDATED:'✏️',
     WEIGHT_REMOVED:'🗑️'
@@ -1471,6 +1490,9 @@ function notificationDestinationLabel(n){
     CONTROL_CONFIRMED:'Ver control confirmado',
     CONTROL_COMPLETED:'Ver resumen del control',
     CONTROL_NO_SHOW:'Ver control',
+    CONTROL_CONFIRMATION_REMINDER:'Confirmar control',
+    CONTROL_REMINDER:'Ver control',
+    RECORD_REMINDER:'Registrar seguimiento',
     CLINICAL_ALERT:'Revisar paciente',
     WEIGHT_UPDATED:'Ver seguimiento',
     WEIGHT_REMOVED:'Ver seguimiento'
@@ -1583,7 +1605,7 @@ async function openNotificationById(id){
     return;
   }
 
-  if(['NEW_CONTROL','CONTROL_CANCELLED','CONTROL_CONFIRMED','CONTROL_COMPLETED','CONTROL_NO_SHOW'].includes(n.type)){
+  if(['NEW_CONTROL','CONTROL_CANCELLED','CONTROL_CONFIRMED','CONTROL_COMPLETED','CONTROL_NO_SHOW','CONTROL_CONFIRMATION_REMINDER','CONTROL_REMINDER'].includes(n.type)){
     if(hasRole('DOCTOR') && n.related_user_id && n.related_user_id!==currentUser.id){
       activePortal='DOCTOR';
       localStorage.setItem('pesocare_active_portal','DOCTOR');
@@ -1602,6 +1624,14 @@ async function openNotificationById(id){
       setTimeout(()=>document.getElementById('patientControlsSection')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
       return;
     }
+  }
+
+  if(n.type==='RECORD_REMINDER'&&hasRole('PATIENT')){
+    activePortal='PATIENT';activePatientTab='TRACKING';
+    localStorage.setItem('pesocare_active_portal','PATIENT');localStorage.setItem('pesocare_patient_tab','TRACKING');
+    await loadData();render();
+    setTimeout(()=>document.getElementById('weightEntryCard')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
+    return;
   }
 
   if(n.type==='CLINICAL_ALERT'&&hasRole('DOCTOR')){
@@ -1809,7 +1839,7 @@ async function handleRealtimeNotification(n,fromFallback=false){
       }
     }
 
-    if(['NEW_CONTROL','CONTROL_CANCELLED','CONTROL_CONFIRMED','CONTROL_COMPLETED','CONTROL_NO_SHOW'].includes(n.type)){
+    if(['NEW_CONTROL','CONTROL_CANCELLED','CONTROL_CONFIRMED','CONTROL_COMPLETED','CONTROL_NO_SHOW','CONTROL_CONFIRMATION_REMINDER','CONTROL_REMINDER'].includes(n.type)){
       if(hasRole('PATIENT')&&activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
         await syncPatientControls();
       }
@@ -1818,6 +1848,10 @@ async function handleRealtimeNotification(n,fromFallback=false){
       }else if(hasRole('DOCTOR')&&activePortal==='DOCTOR'&&!doctorPatientDetail){
         await Promise.allSettled([syncDoctorAgenda(true),syncDoctorOutcomes(true)]);
       }
+    }
+
+    if(n.type==='RECORD_REMINDER'&&hasRole('PATIENT')&&activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
+      await syncPatientReminderPlan(true);
     }
 
     if(n.type==='CLINICAL_ALERT'&&hasRole('DOCTOR')){
@@ -2090,6 +2124,23 @@ async function loadData(){
   roles=rr.map(r=>r.role);
   await loadNotifications();
 
+  try{
+    const prefRows=await dbGet(`notification_preferences?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&limit=1`);
+    if(prefRows?.[0]){
+      const p=prefRows[0];
+      notificationPreferences={
+        push_enabled:p.push_enabled!==false,
+        messages:p.messages!==false,
+        prescriptions:p.prescriptions!==false,
+        care_updates:p.care_updates!==false,
+        support:p.support!==false,
+        appointment_reminders:p.appointment_reminders!==false,
+        confirmation_reminders:p.confirmation_reminders!==false,
+        record_reminders:p.record_reminders!==false
+      };
+    }
+  }catch(err){console.warn('Notification preferences unavailable',err)}
+
   const storedPortal=localStorage.getItem('pesocare_active_portal');
   if(storedPortal&&roles.includes(storedPortal))activePortal=storedPortal;
   else if(roles.includes('PATIENT'))activePortal='PATIENT';
@@ -2117,6 +2168,13 @@ async function loadData(){
       patientPrescriptions=(await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)||[]).filter(p=>!p.deleted_at);
     }
     supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
+    try{
+      const plan=await dbRpc('bodycare_get_patient_reminder_plan',{});
+      patientReminderPlan=Array.isArray(plan)?plan[0]||null:plan;
+    }catch(err){
+      console.warn('Patient reminder plan unavailable',err);
+      patientReminderPlan=null;
+    }
   }
 
   if(hasRole('DOCTOR')){
@@ -2492,6 +2550,74 @@ function dashboardView(){
   drawCharts(sorted);
 }
 
+
+function patientReminderDueLabel(){
+  const due=patientReminderPlan?.next_record_due_date;
+  if(!due)return 'Sin fecha calculada';
+  const t=today();
+  if(due<t)return `Pendiente desde ${fmt(due)}`;
+  if(due===t)return 'Corresponde hoy';
+  return `Próximo registro sugerido: ${fmt(due)}`;
+}
+
+function patientReminderNextControlLabel(){
+  const value=patientReminderPlan?.next_control_at;
+  if(!value)return 'Sin control próximo';
+  return `${fmt(chileDateFromTimestamp(value))} · ${chileTimeFromTimestamp(value)}`;
+}
+
+function patientReminderCardMarkup(){
+  const days=Number(patientReminderPlan?.record_reminder_days||7);
+  return `<section class="card engagement-card" id="patientReminderCard">
+    <div class="card-head">
+      <div><h2 class="section-title">Recordatorios BodyCare</h2><div class="muted">Configura qué avisos de seguimiento quieres recibir.</div></div>
+      <span class="engagement-status">Automático</span>
+    </div>
+    <div class="engagement-summary">
+      <div><span>Frecuencia de registro</span><strong>Cada ${days} días</strong><small>${esc(patientReminderDueLabel())}</small></div>
+      <div><span>Próximo control</span><strong>${esc(patientReminderNextControlLabel())}</strong><small>${patientReminderPlan?.next_control_at?(patientReminderPlan?.next_control_status==='CONFIRMED'?'Confirmado':'Programado'):'Sin agenda activa'}</small></div>
+    </div>
+    <div class="reminder-preference-list">
+      <label class="reminder-preference-row"><input type="checkbox" id="reminderPrefConfirmation" ${notificationPreferences.confirmation_reminders?'checked':''}><span><strong>Confirmación de control</strong><small>Aviso aproximadamente 24 horas antes si aún no has confirmado.</small></span></label>
+      <label class="reminder-preference-row"><input type="checkbox" id="reminderPrefAppointment" ${notificationPreferences.appointment_reminders?'checked':''}><span><strong>Control próximo</strong><small>Aviso aproximadamente 2 horas antes del control.</small></span></label>
+      <label class="reminder-preference-row"><input type="checkbox" id="reminderPrefRecord" ${notificationPreferences.record_reminders?'checked':''}><span><strong>Registro de seguimiento</strong><small>Aviso cuando superas la frecuencia definida por tu profesional.</small></span></label>
+    </div>
+    <div class="engagement-note">Los recordatorios aparecen dentro de BodyCare. Si las notificaciones Push están activas, también pueden llegar aunque la app esté cerrada.</div>
+  </section>`;
+}
+
+async function syncPatientReminderPlan(renderCard=false){
+  if(!hasRole('PATIENT'))return;
+  try{
+    const plan=await dbRpc('bodycare_get_patient_reminder_plan',{});
+    patientReminderPlan=Array.isArray(plan)?plan[0]||null:plan;
+    if(renderCard){
+      const old=document.getElementById('patientReminderCard');
+      if(old){
+        const temp=document.createElement('div');temp.innerHTML=patientReminderCardMarkup().trim();
+        const fresh=temp.firstElementChild;
+        if(fresh){old.replaceWith(fresh);bindPatientReminderPreferences()}
+      }
+    }
+  }catch(err){console.warn('Patient reminder plan sync failed',err)}
+}
+
+async function savePatientReminderPreferences(){
+  const appointment=document.getElementById('reminderPrefAppointment')?.checked ?? notificationPreferences.appointment_reminders;
+  const confirmation=document.getElementById('reminderPrefConfirmation')?.checked ?? notificationPreferences.confirmation_reminders;
+  const record=document.getElementById('reminderPrefRecord')?.checked ?? notificationPreferences.record_reminders;
+  try{
+    const rows=await dbRpc('bodycare_save_reminder_preferences',{p_appointment_reminders:appointment,p_confirmation_reminders:confirmation,p_record_reminders:record});
+    const saved=Array.isArray(rows)?rows[0]:rows;
+    if(saved){notificationPreferences={...notificationPreferences,appointment_reminders:saved.appointment_reminders!==false,confirmation_reminders:saved.confirmation_reminders!==false,record_reminders:saved.record_reminders!==false}}
+    showToast('Recordatorios actualizados','Tus preferencias quedaron guardadas.','CONTROL_REMINDER');
+  }catch(err){alert('No fue posible guardar los recordatorios: '+err.message);await loadData();render()}
+}
+
+function bindPatientReminderPreferences(){
+  ['reminderPrefAppointment','reminderPrefConfirmation','reminderPrefRecord'].forEach(id=>document.getElementById(id)?.addEventListener('change',savePatientReminderPreferences));
+}
+
 function patientDoctorView(){
   const selectedStored=localStorage.getItem('pesocare_selected_doctor');
   const selectedDoctor=linkedDoctorProfiles.some(d=>d.user_id===selectedStored)?selectedStored:(linkedDoctorProfiles[0]?.user_id||'');
@@ -2526,6 +2652,8 @@ function patientDoctorView(){
       </form>
       <p id="doctorLinkMsg" class="error"></p>
     </section>
+
+    ${patientReminderCardMarkup()}
 
     <section class="card" id="patientControlsSection">
       <div class="card-head">
@@ -2594,6 +2722,8 @@ function patientDoctorView(){
   bindCommonHeader();
   bindPatientSubTabs();
   bindPatientCare();
+  bindPatientReminderPreferences();
+  setTimeout(()=>syncPatientReminderPlan(true),0);
   renderPatientPrescriptionList();
   renderPatientMessageThread();
   renderPatientControls();
@@ -3647,7 +3777,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v19.0'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v20.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -4546,7 +4676,8 @@ function alertSettingsValues(){
     no_record_days:7,
     weight_gain_pct:2,
     rapid_loss_pct:3,
-    abdominal_increase_cm:5
+    abdominal_increase_cm:5,
+    record_reminder_days:7
   };
 }
 
@@ -4556,6 +4687,7 @@ async function saveDoctorAlertSettings(e){
   const gain=Number(document.getElementById('alertWeightGainPct')?.value);
   const loss=Number(document.getElementById('alertRapidLossPct')?.value);
   const abdomen=Number(document.getElementById('alertAbdominalIncrease')?.value);
+  const reminderDays=Number(document.getElementById('recordReminderDays')?.value);
 
   try{
     const rows=await dbRpc('bodycare_save_alert_settings',{
@@ -4565,8 +4697,11 @@ async function saveDoctorAlertSettings(e){
       p_abdominal_increase_cm:abdomen
     });
     doctorAlertSettings=Array.isArray(rows)?rows[0]:rows;
+    const reminderRows=await dbRpc('bodycare_save_record_reminder_days',{p_days:reminderDays});
+    const reminderSaved=Array.isArray(reminderRows)?reminderRows[0]:reminderRows;
+    if(reminderSaved)doctorAlertSettings=reminderSaved;
     await syncDoctorPriorities(true);
-    showToast('Criterios actualizados','BodyCare aplicará estos umbrales a los nuevos registros.','CLINICAL_ALERT');
+    showToast('Criterios y recordatorios actualizados','BodyCare aplicará los umbrales y la nueva frecuencia de acompañamiento.','CLINICAL_ALERT');
   }catch(err){
     alert('No fue posible guardar los criterios de seguimiento: '+err.message);
   }
@@ -4744,6 +4879,10 @@ function doctorView(){
               <div class="suffix-input"><input id="alertNoRecordDays" type="number" min="3" max="30" step="1" value="${Number(settings.no_record_days||7)}"><span>días</span></div>
             </div>
             <div>
+              <label for="recordReminderDays">Recordar registro al paciente</label>
+              <div class="suffix-input"><input id="recordReminderDays" type="number" min="3" max="14" step="1" value="${Number(settings.record_reminder_days||7)}"><span>días</span></div>
+            </div>
+            <div>
               <label for="alertWeightGainPct">Aumento de peso</label>
               <div class="suffix-input"><input id="alertWeightGainPct" type="number" min="0.5" max="10" step="0.1" value="${Number(settings.weight_gain_pct||2)}"><span>%</span></div>
             </div>
@@ -4756,7 +4895,7 @@ function doctorView(){
               <div class="suffix-input"><input id="alertAbdominalIncrease" type="number" min="1" max="20" step="0.5" value="${Number(settings.abdominal_increase_cm||5)}"><span>cm</span></div>
             </div>
           </div>
-          <div class="clinical-settings-note">Estos criterios organizan la revisión de pacientes y no representan por sí mismos una conclusión clínica.</div>
+          <div class="clinical-settings-note">Los criterios clínico-operacionales organizan la revisión. La frecuencia de recordatorio solo define cuándo BodyCare invita al paciente a actualizar su seguimiento; no representa una conclusión clínica.</div>
           <button class="secondary" type="submit" style="margin-top:12px">Guardar criterios</button>
         </form>
       </section>`}
@@ -5403,6 +5542,7 @@ async function saveWeightRecord(e){
 
     editingWeightRecordId=null;
     dashboardView();
+    syncPatientReminderPlan(false).catch(()=>{});
 
     showToast(
       editing?'Registro actualizado':'Registro guardado',
@@ -5492,7 +5632,7 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];patientReminderPlan=null;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){

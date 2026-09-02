@@ -497,3 +497,12 @@ https://lsueyras.github.io/pesocare/
 - Ficha médica incorpora `Resumen de evolución`.
 - Métricas transparentes y descriptivas; no reemplazan juicio clínico.
 - Backend seguro: `bodycare_get_doctor_outcomes(integer)`.
+
+
+## BodyCare V20 — Smart Reminders & Engagement
+- Motor automático horario con pg_cron.
+- Confirmación pendiente ~24 h antes, control próximo ~2 h antes y falta de registro según frecuencia médica.
+- Deduplicación backend y recordatorio de registro máximo una vez por semana.
+- Médico define frecuencia entre 3 y 14 días.
+- Paciente configura preferencias en Recordatorios BodyCare.
+- Deep links a Controles o Registrar peso.
