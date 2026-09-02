@@ -450,3 +450,17 @@ https://lsueyras.github.io/pesocare/
 - Sincronización de respaldo del dashboard médico cada 15 segundos.
 - Al volver a la pestaña, se actualizan agenda y prioridades.
 - RPC backend: `bodycare_get_doctor_agenda(date, integer)`.
+
+
+## BodyCare V18 — Ciclo completo de controles
+- Estados: Programado, Confirmado, Completado, No asistió, Cancelado.
+- Paciente puede confirmar asistencia.
+- Médico puede completar control con resumen compartido.
+- Médico puede registrar inasistencia.
+- Próximos controles e historial se muestran separados.
+- Completados/no-show ya no bloquean disponibilidad futura.
+- Cancelados continúan ocultos operacionalmente y preservados para auditoría.
+- Botón Agendar próximo desde el historial médico.
+- Agenda V17 muestra si un control está Programado o Confirmado.
+- Realtime + Push para confirmación, completado e inasistencia.
+- Tabla `care_control_events` conserva trazabilidad de cambios de estado.

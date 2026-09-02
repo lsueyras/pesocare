@@ -1828,3 +1828,140 @@ input[data-date-cl].date-invalid{
     white-space:normal;
   }
 }
+
+/* BodyCare V18 — ciclo completo de controles */
+.control-lifecycle-list{
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+.control-list-section{
+  min-width:0;
+}
+.control-list-heading{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  margin:2px 0 8px;
+  color:#344054;
+  font-size:.78rem;
+  font-weight:800;
+}
+.control-list-heading span{
+  display:inline-grid;
+  place-items:center;
+  min-width:22px;
+  height:22px;
+  padding:0 5px;
+  border-radius:999px;
+  background:#f2f4f7;
+  color:#475467;
+  font-size:.68rem;
+}
+.control-history-section{
+  padding-top:14px;
+  border-top:1px solid #eaecf0;
+}
+.empty-state.compact{
+  padding:8px 0;
+  font-size:.78rem;
+}
+.control-card{
+  align-items:flex-start;
+}
+.control-card-actions{
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  gap:6px;
+  flex:0 0 auto;
+}
+.control-status.confirmed{
+  background:#ecfdf3;
+  color:#027a48;
+}
+.control-status.completed{
+  background:#eef4ff;
+  color:#3538cd;
+}
+.control-status.no_show{
+  background:#fffaeb;
+  color:#b54708;
+}
+.control-outcome{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  margin-top:9px;
+  padding:9px 10px;
+  border-radius:10px;
+  background:#f9fafb;
+  color:#475467;
+  font-size:.76rem;
+  line-height:1.4;
+}
+.control-outcome strong{
+  color:#344054;
+  font-size:.75rem;
+}
+.no-show-note{
+  background:#fffaeb;
+  color:#93370d;
+}
+.control-card-completed{
+  background:#fcfcfd;
+}
+.control-card-no_show{
+  background:#fffdf7;
+}
+.control-outcome-overlay{
+  position:fixed;
+  inset:0;
+  z-index:22000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:18px;
+  background:rgba(16,24,40,.48);
+}
+.control-outcome-dialog{
+  width:min(540px,100%);
+  max-height:calc(100vh - 36px);
+  overflow:auto;
+  padding:18px;
+  border-radius:18px;
+  background:#fff;
+  box-shadow:0 24px 80px rgba(16,24,40,.3);
+}
+.control-outcome-dialog h3{
+  margin:0;
+  color:#101828;
+}
+
+@media(max-width:650px){
+  .control-card{
+    flex-direction:column;
+  }
+  .control-card-actions,
+  .doctor-control-actions{
+    width:100%;
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .doctor-control-actions .control-cancel-btn{
+    grid-column:1 / -1;
+  }
+  .control-card-actions button{
+    width:100%;
+  }
+  .control-outcome-overlay{
+    align-items:flex-end;
+    padding:0;
+  }
+  .control-outcome-dialog{
+    width:100%;
+    max-height:82vh;
+    border-radius:20px 20px 0 0;
+    padding:18px 18px calc(18px + env(safe-area-inset-bottom));
+  }
+}

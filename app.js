@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='17.0';
+const APP_VERSION='18.0';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -1024,12 +1024,12 @@ function formatDateTime(value){
 const PATIENT_MEDICAL_NOTIFICATION_TYPES=[
   'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED',
   'NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED',
-  'NEW_CONTROL','CONTROL_CANCELLED'
+  'NEW_CONTROL','CONTROL_CANCELLED','CONTROL_COMPLETED','CONTROL_NO_SHOW'
 ];
 
 const DOCTOR_PATIENT_CONTEXT_NOTIFICATION_TYPES=[
   'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED',
-  'NEW_CONTROL','CONTROL_CANCELLED',
+  'NEW_CONTROL','CONTROL_CANCELLED','CONTROL_CONFIRMED',
   'NEW_WEIGHT','WEIGHT_UPDATED','WEIGHT_REMOVED',
   'CLINICAL_ALERT'
 ];
@@ -1315,6 +1315,9 @@ function notificationIcon(type){
     PUSH_TEST:'🔔',
     NEW_CONTROL:'🗓️',
     CONTROL_CANCELLED:'🚫',
+    CONTROL_CONFIRMED:'✅',
+    CONTROL_COMPLETED:'🩺',
+    CONTROL_NO_SHOW:'⚠️',
     CLINICAL_ALERT:'🔴',
     WEIGHT_UPDATED:'✏️',
     WEIGHT_REMOVED:'🗑️'
@@ -1436,6 +1439,9 @@ function notificationDestinationLabel(n){
     PUSH_TEST:'Abrir BodyCare',
     NEW_CONTROL:'Ver control',
     CONTROL_CANCELLED:'Ver controles',
+    CONTROL_CONFIRMED:'Ver control confirmado',
+    CONTROL_COMPLETED:'Ver resumen del control',
+    CONTROL_NO_SHOW:'Ver control',
     CLINICAL_ALERT:'Revisar paciente',
     WEIGHT_UPDATED:'Ver seguimiento',
     WEIGHT_REMOVED:'Ver seguimiento'
@@ -1548,7 +1554,7 @@ async function openNotificationById(id){
     return;
   }
 
-  if(['NEW_CONTROL','CONTROL_CANCELLED'].includes(n.type)){
+  if(['NEW_CONTROL','CONTROL_CANCELLED','CONTROL_CONFIRMED','CONTROL_COMPLETED','CONTROL_NO_SHOW'].includes(n.type)){
     if(hasRole('DOCTOR') && n.related_user_id && n.related_user_id!==currentUser.id){
       activePortal='DOCTOR';
       localStorage.setItem('pesocare_active_portal','DOCTOR');
@@ -1764,7 +1770,7 @@ async function handleRealtimeNotification(n,fromFallback=false){
       }
     }
 
-    if(['NEW_CONTROL','CONTROL_CANCELLED'].includes(n.type)){
+    if(['NEW_CONTROL','CONTROL_CANCELLED','CONTROL_CONFIRMED','CONTROL_COMPLETED','CONTROL_NO_SHOW'].includes(n.type)){
       if(hasRole('PATIENT')&&activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
         await syncPatientControls();
       }
@@ -2477,7 +2483,7 @@ function patientDoctorView(){
       <div class="card-head">
         <div>
           <h2 class="section-title">Controles</h2>
-          <div class="muted">Médico y paciente pueden registrar un nuevo control. El cambio queda compartido automáticamente.</div>
+          <div class="muted">Médico y paciente pueden agendar controles. El paciente puede confirmar asistencia y el resultado queda compartido en el historial.</div>
         </div>
       </div>
       ${linkedDoctorProfiles.length?`
@@ -3030,25 +3036,84 @@ function controlCreatorLabel(c,context){
   return context==='doctor'?'Registrado por paciente':'Registrado por médico';
 }
 
-function controlListMarkup(rows,context){
-  const list=[...(rows||[])]
-    .filter(c=>c.status==='SCHEDULED')
-    .sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
-  if(!list.length)return '<div class="empty-state">Aún no hay controles agendados.</div>';
+function controlStatusLabel(status){
+  const labels={
+    SCHEDULED:'Programado',
+    CONFIRMED:'Confirmado',
+    COMPLETED:'Completado',
+    NO_SHOW:'No asistió',
+    CANCELLED:'Cancelado'
+  };
+  return labels[status]||status||'Control';
+}
 
-  return `<div class="control-list">${list.map(c=>`
-    <div class="control-card">
-      <div class="control-card-main">
-        <div class="control-date">${esc(formatControlDateTime(c.scheduled_at))}</div>
-        <div class="control-meta">
-          <span class="control-status scheduled">Agendado</span>
-          <span>${esc(controlCreatorLabel(c,context))}</span>
-          <span>${validControlSlotMinutes(c.slot_minutes||30)} min</span>
-        </div>
-        ${c.notes?`<div class="control-notes">${esc(c.notes)}</div>`:''}
+function isActiveControl(c){
+  return ['SCHEDULED','CONFIRMED'].includes(c?.status);
+}
+
+function controlActionMarkup(c,context){
+  if(context==='patient'){
+    if(c.status==='SCHEDULED'){
+      return `<div class="control-card-actions">
+        <button type="button" class="primary small-btn" data-confirm-control="${c.id}">Confirmar</button>
+        <button type="button" class="secondary small-btn control-cancel-btn" data-cancel-control="${c.id}" data-control-context="patient">Cancelar</button>
+      </div>`;
+    }
+    if(c.status==='CONFIRMED'){
+      return `<div class="control-card-actions"><button type="button" class="secondary small-btn control-cancel-btn" data-cancel-control="${c.id}" data-control-context="patient">Cancelar</button></div>`;
+    }
+    return '';
+  }
+
+  if(context==='doctor'&&isActiveControl(c)){
+    return `<div class="control-card-actions doctor-control-actions">
+      <button type="button" class="primary small-btn" data-complete-control="${c.id}">Completar</button>
+      <button type="button" class="secondary small-btn" data-no-show-control="${c.id}">No asistió</button>
+      <button type="button" class="secondary small-btn control-cancel-btn" data-cancel-control="${c.id}" data-control-context="doctor">Cancelar</button>
+    </div>`;
+  }
+
+  if(context==='doctor'&&['COMPLETED','NO_SHOW'].includes(c.status)){
+    return `<div class="control-card-actions"><button type="button" class="secondary small-btn" data-next-control="${c.id}">Agendar próximo</button></div>`;
+  }
+
+  return '';
+}
+
+function controlCardMarkup(c,context){
+  return `<div class="control-card control-card-${String(c.status||'').toLowerCase()}">
+    <div class="control-card-main">
+      <div class="control-date">${esc(formatControlDateTime(c.scheduled_at))}</div>
+      <div class="control-meta">
+        <span class="control-status ${String(c.status||'').toLowerCase()}">${controlStatusLabel(c.status)}</span>
+        <span>${esc(controlCreatorLabel(c,context))}</span>
+        <span>${validControlSlotMinutes(c.slot_minutes||30)} min</span>
       </div>
-      <button type="button" class="secondary small-btn control-cancel-btn" data-cancel-control="${c.id}" data-control-context="${context}">Cancelar</button>
-    </div>`).join('')}</div>`;
+      ${c.notes?`<div class="control-notes">${esc(c.notes)}</div>`:''}
+      ${c.status==='COMPLETED'&&c.outcome_summary?`<div class="control-outcome"><strong>Resumen del control</strong><span>${esc(c.outcome_summary)}</span></div>`:''}
+      ${c.status==='NO_SHOW'?`<div class="control-outcome no-show-note"><span>Este control quedó registrado como no realizado.</span></div>`:''}
+    </div>
+    ${controlActionMarkup(c,context)}
+  </div>`;
+}
+
+function controlListMarkup(rows,context){
+  const all=[...(rows||[])].filter(c=>c.status!=='CANCELLED');
+  const upcoming=all.filter(isActiveControl).sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
+  const history=all.filter(c=>['COMPLETED','NO_SHOW'].includes(c.status)).sort((a,b)=>String(b.scheduled_at).localeCompare(String(a.scheduled_at)));
+
+  if(!all.length)return '<div class="empty-state">Aún no hay controles registrados.</div>';
+
+  return `<div class="control-lifecycle-list">
+    <div class="control-list-section">
+      <div class="control-list-heading">Próximos controles <span>${upcoming.length}</span></div>
+      ${upcoming.length?`<div class="control-list">${upcoming.map(c=>controlCardMarkup(c,context)).join('')}</div>`:'<div class="empty-state compact">No hay próximos controles.</div>'}
+    </div>
+    <div class="control-list-section control-history-section">
+      <div class="control-list-heading">Historial de controles <span>${history.length}</span></div>
+      ${history.length?`<div class="control-list">${history.map(c=>controlCardMarkup(c,context)).join('')}</div>`:'<div class="empty-state compact">Aún no hay controles completados.</div>'}
+    </div>
+  </div>`;
 }
 
 function setControlSyncStatus(context,state,text){
@@ -3059,9 +3124,21 @@ function setControlSyncStatus(context,state,text){
   if(label)label.textContent=text;
 }
 
-function bindControlCancelButtons(root=document){
+function bindControlActionButtons(root=document){
   root.querySelectorAll('[data-cancel-control]').forEach(btn=>{
     btn.addEventListener('click',()=>cancelSharedControl(btn.dataset.cancelControl,btn.dataset.controlContext));
+  });
+  root.querySelectorAll('[data-confirm-control]').forEach(btn=>{
+    btn.addEventListener('click',()=>confirmPatientControl(btn.dataset.confirmControl));
+  });
+  root.querySelectorAll('[data-complete-control]').forEach(btn=>{
+    btn.addEventListener('click',()=>openCompleteControlDialog(btn.dataset.completeControl));
+  });
+  root.querySelectorAll('[data-no-show-control]').forEach(btn=>{
+    btn.addEventListener('click',()=>markDoctorControlNoShow(btn.dataset.noShowControl));
+  });
+  root.querySelectorAll('[data-next-control]').forEach(btn=>{
+    btn.addEventListener('click',()=>prepareNextDoctorControl(btn.dataset.nextControl));
   });
 }
 
@@ -3069,14 +3146,14 @@ function renderPatientControls(){
   const el=document.getElementById('patientControlList');
   if(!el)return;
   el.innerHTML=controlListMarkup(patientControls,'patient');
-  bindControlCancelButtons(el);
+  bindControlActionButtons(el);
 }
 
 function renderDoctorControls(){
   const el=document.getElementById('doctorControlList');
   if(!el||!doctorPatientDetail)return;
   el.innerHTML=controlListMarkup(doctorPatientDetail.controls||[],'doctor');
-  bindControlCancelButtons(el);
+  bindControlActionButtons(el);
 }
 
 async function syncPatientControls(){
@@ -3307,10 +3384,121 @@ async function createDoctorControl(e){
   }
 }
 
+async function confirmPatientControl(id){
+  const item=patientControls.find(c=>c.id===id);
+  if(!item||item.status!=='SCHEDULED')return;
+  if(!confirm(`¿Confirmar asistencia al control del ${formatControlDateTime(item.scheduled_at)}?`))return;
+
+  setControlSyncStatus('patient','syncing','Confirmando control…');
+  try{
+    const rows=await dbRpc('bodycare_confirm_control',{p_control_id:id});
+    const saved=Array.isArray(rows)?rows[0]:rows;
+    patientControls=patientControls.map(c=>c.id===id?(saved||{...c,status:'CONFIRMED'}):c);
+    renderPatientControls();
+    setControlSyncStatus('patient','ok','Control confirmado');
+    showToast('Control confirmado','Tu médico recibió la confirmación.','CONTROL_CONFIRMED');
+    syncPatientControls().catch(()=>{});
+  }catch(err){
+    setControlSyncStatus('patient','error','No fue posible confirmar el control.');
+    alert(err.message);
+  }
+}
+
+function closeCompleteControlDialog(){
+  document.getElementById('completeControlOverlay')?.remove();
+}
+
+function openCompleteControlDialog(id){
+  const item=(doctorPatientDetail?.controls||[]).find(c=>c.id===id);
+  if(!item||!isActiveControl(item))return;
+  closeCompleteControlDialog();
+
+  const overlay=document.createElement('div');
+  overlay.id='completeControlOverlay';
+  overlay.className='control-outcome-overlay';
+  overlay.innerHTML=`<div class="control-outcome-dialog" role="dialog" aria-modal="true" aria-labelledby="completeControlTitle">
+    <div class="card-head">
+      <div><h3 id="completeControlTitle">Completar control</h3><div class="muted">${esc(formatControlDateTime(item.scheduled_at))}</div></div>
+      <button type="button" class="icon-button" data-close-control-outcome aria-label="Cerrar">×</button>
+    </div>
+    <label for="controlOutcomeSummary">Resumen compartido con el paciente <span class="muted">(opcional)</span></label>
+    <textarea id="controlOutcomeSummary" rows="5" maxlength="3000" placeholder="Ej: evolución revisada, acuerdos de seguimiento y próximos pasos..."></textarea>
+    <div class="clinical-settings-note">Este resumen será visible para el paciente. Evita incluir información que no quieras compartir en su portal.</div>
+    <div class="form-actions" style="margin-top:12px">
+      <button type="button" class="primary" id="saveCompletedControl">Guardar como completado</button>
+      <button type="button" class="secondary" data-close-control-outcome>Cancelar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('[data-close-control-outcome]').forEach(btn=>btn.addEventListener('click',closeCompleteControlDialog));
+  overlay.addEventListener('click',e=>{if(e.target===overlay)closeCompleteControlDialog()});
+  document.getElementById('saveCompletedControl')?.addEventListener('click',()=>completeDoctorControl(id));
+  setTimeout(()=>document.getElementById('controlOutcomeSummary')?.focus(),50);
+}
+
+async function completeDoctorControl(id){
+  const summary=document.getElementById('controlOutcomeSummary')?.value.trim()||null;
+  const button=document.getElementById('saveCompletedControl');
+  if(button)button.disabled=true;
+  try{
+    const rows=await dbRpc('bodycare_complete_control',{p_control_id:id,p_outcome_summary:summary});
+    const saved=Array.isArray(rows)?rows[0]:rows;
+    if(doctorPatientDetail){
+      doctorPatientDetail.controls=(doctorPatientDetail.controls||[]).map(c=>c.id===id?(saved||{...c,status:'COMPLETED',outcome_summary:summary}):c);
+    }
+    closeCompleteControlDialog();
+    renderDoctorControls();
+    setControlSyncStatus('doctor','ok','Control completado y compartido');
+    showToast('Control completado','El resumen quedó disponible para el paciente.','CONTROL_COMPLETED');
+    syncDoctorAgenda(false).catch(()=>{});
+    syncDoctorControls(doctorPatientDetail?.profile?.user_id).catch(()=>{});
+  }catch(err){
+    if(button)button.disabled=false;
+    alert('No fue posible completar el control: '+err.message);
+  }
+}
+
+async function markDoctorControlNoShow(id){
+  const item=(doctorPatientDetail?.controls||[]).find(c=>c.id===id);
+  if(!item||!isActiveControl(item))return;
+  if(!confirm(`¿Registrar que el paciente no asistió al control del ${formatControlDateTime(item.scheduled_at)}?`))return;
+
+  setControlSyncStatus('doctor','syncing','Registrando inasistencia…');
+  try{
+    const rows=await dbRpc('bodycare_mark_control_no_show',{p_control_id:id});
+    const saved=Array.isArray(rows)?rows[0]:rows;
+    doctorPatientDetail.controls=(doctorPatientDetail.controls||[]).map(c=>c.id===id?(saved||{...c,status:'NO_SHOW'}):c);
+    renderDoctorControls();
+    setControlSyncStatus('doctor','ok','Inasistencia registrada');
+    showToast('Control no realizado','El paciente fue informado y puede coordinar una nueva fecha.','CONTROL_NO_SHOW');
+    syncDoctorAgenda(false).catch(()=>{});
+    syncDoctorControls(doctorPatientDetail.profile.user_id).catch(()=>{});
+  }catch(err){
+    setControlSyncStatus('doctor','error','No fue posible registrar la inasistencia.');
+    alert(err.message);
+  }
+}
+
+function prepareNextDoctorControl(id){
+  const item=(doctorPatientDetail?.controls||[]).find(c=>c.id===id);
+  const date=document.getElementById('doctorControlDate');
+  const time=document.getElementById('doctorControlTime');
+  const notes=document.getElementById('doctorControlNotes');
+  if(date){
+    date.value=formatDateCL(today());
+    date.dataset.isoDate=today();
+  }
+  if(time)time.value='';
+  if(notes&&!notes.value)notes.value=item?.status==='NO_SHOW'?'Reagendamiento de control':'Próximo control de seguimiento';
+  clearControlAvailability('doctor');
+  document.getElementById('doctorControlForm')?.scrollIntoView({behavior:'smooth',block:'start'});
+  setTimeout(()=>document.getElementById('doctorControlTime')?.focus(),250);
+}
+
 async function cancelSharedControl(id,context){
   const source=context==='doctor'?(doctorPatientDetail?.controls||[]):patientControls;
   const item=source.find(c=>c.id===id);
-  if(!item||item.status==='CANCELLED')return;
+  if(!item||!isActiveControl(item))return;
 
   if(!confirm(`¿Cancelar el control del ${formatControlDateTime(item.scheduled_at)}? El otro usuario será notificado.`))return;
 
@@ -3411,7 +3599,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v17.0'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v18.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -3497,7 +3685,7 @@ function markVisibleMedicalNotifications(){
 
   if(selectedControlDoctor){
     notifications.filter(n=>isActionableUnread(n)&&[
-      'NEW_CONTROL','CONTROL_CANCELLED'
+      'NEW_CONTROL','CONTROL_CANCELLED','CONTROL_COMPLETED','CONTROL_NO_SHOW'
     ].includes(n.type)&&n.related_user_id===selectedControlDoctor).forEach(n=>ids.push(n.id));
   }
 
@@ -3860,6 +4048,7 @@ function doctorAgendaMarkup(){
         <div class="agenda-patient">
           <div class="agenda-patient-title">
             <strong>${esc(item.patient_name||'Paciente')}</strong>
+            <span class="control-status ${String(item.status||'SCHEDULED').toLowerCase()}">${controlStatusLabel(item.status)}</span>
             <span class="priority-chip ${String(priority.priority||'GREEN').toLowerCase()}">${priorityLabel(priority.priority||'GREEN')}</span>
           </div>
           <div class="agenda-meta">${esc(agendaCreatorText(item))}${item.notes?` · ${esc(item.notes)}`:''}</div>
@@ -4408,7 +4597,7 @@ function doctorPatientDetailView(){
       <div class="card-head">
         <div>
           <h2 class="section-title">Controles</h2>
-          <div class="muted">Registra un nuevo control. El paciente lo verá de inmediato y recibirá una notificación.</div>
+          <div class="muted">Agenda, completa o registra inasistencias. El paciente verá el estado y los resúmenes compartidos.</div>
         </div>
       </div>
       <form id="doctorControlForm" class="control-form">
