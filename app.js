@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='20.1';
+const APP_VERSION='20.2';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -50,6 +50,7 @@ let notificationPreferences={
 };
 let patientReminderPlan=null;
 let patientReminderSaving=false;
+let patientReminderDirty=false;
 let pushBrowserSubscription=null;
 let pushSettingsLoaded=false;
 let launchNotificationId=new URLSearchParams(location.search).get('notification');
@@ -1852,7 +1853,7 @@ async function handleRealtimeNotification(n,fromFallback=false){
     }
 
     if(n.type==='RECORD_REMINDER'&&hasRole('PATIENT')&&activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
-      await syncPatientReminderPlan(true);
+      await syncPatientReminderPlan(!patientReminderDirty&&!patientReminderSaving);
     }
 
     if(n.type==='CLINICAL_ALERT'&&hasRole('DOCTOR')){
@@ -2170,11 +2171,14 @@ async function loadData(){
     }
     supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
     try{
+      const pref=await dbRpc('bodycare_get_reminder_preferences',{});
+      const savedPref=Array.isArray(pref)?pref[0]||null:pref;
+      applyReminderPreferencesFromSource(savedPref);
+
       const plan=await dbRpc('bodycare_get_patient_reminder_plan',{});
       patientReminderPlan=Array.isArray(plan)?plan[0]||null:plan;
-      applyReminderPreferencesFromSource(patientReminderPlan);
     }catch(err){
-      console.warn('Patient reminder plan unavailable',err);
+      console.warn('Patient reminder settings unavailable',err);
       patientReminderPlan=null;
     }
   }
@@ -2595,24 +2599,74 @@ function patientReminderNextControlLabel(){
 
 function patientReminderCardMarkup(){
   const days=Number(patientReminderPlan?.record_reminder_days||7);
+  const statusClass=patientReminderSaving?'saving':patientReminderDirty?'dirty':'saved';
+  const statusText=patientReminderSaving?'Guardando…':patientReminderDirty?'Cambios sin guardar':'Preferencias guardadas';
+
   return `<section class="card engagement-card" id="patientReminderCard">
     <div class="card-head">
-      <div><h2 class="section-title">Recordatorios BodyCare</h2><div class="muted">Configura qué avisos de seguimiento quieres recibir.</div></div>
+      <div>
+        <h2 class="section-title">Recordatorios BodyCare</h2>
+        <div class="muted">Elige qué recordatorios quieres recibir y guarda tus cambios.</div>
+      </div>
       <span class="engagement-status">Automático</span>
     </div>
+
     <div class="engagement-summary">
-      <div><span>Frecuencia de registro</span><strong>Cada ${days} días</strong><small>${esc(patientReminderDueLabel())}</small></div>
-      <div><span>Próximo control</span><strong>${esc(patientReminderNextControlLabel())}</strong><small>${patientReminderPlan?.next_control_at?(patientReminderPlan?.next_control_status==='CONFIRMED'?'Confirmado':'Programado'):'Sin agenda activa'}</small></div>
+      <div>
+        <span>Frecuencia de registro</span>
+        <strong>Cada ${days} días</strong>
+        <small>${esc(patientReminderDueLabel())}</small>
+      </div>
+      <div>
+        <span>Próximo control</span>
+        <strong>${esc(patientReminderNextControlLabel())}</strong>
+        <small>${patientReminderPlan?.next_control_at?(patientReminderPlan?.next_control_status==='CONFIRMED'?'Confirmado':'Programado'):'Sin agenda activa'}</small>
+      </div>
     </div>
+
     <div class="reminder-preference-list">
-      <label class="reminder-preference-row"><input type="checkbox" id="reminderPrefConfirmation" ${notificationPreferences.confirmation_reminders?'checked':''}><span><strong>Confirmación de control</strong><small>Aviso aproximadamente 24 horas antes si aún no has confirmado.</small></span></label>
-      <label class="reminder-preference-row"><input type="checkbox" id="reminderPrefAppointment" ${notificationPreferences.appointment_reminders?'checked':''}><span><strong>Control próximo</strong><small>Aviso aproximadamente 2 horas antes del control.</small></span></label>
-      <label class="reminder-preference-row"><input type="checkbox" id="reminderPrefRecord" ${notificationPreferences.record_reminders?'checked':''}><span><strong>Registro de seguimiento</strong><small>Aviso cuando superas la frecuencia definida por tu profesional.</small></span></label>
+      <label class="reminder-preference-row">
+        <span class="bodycare-switch">
+          <input type="checkbox" id="reminderPrefConfirmation" ${notificationPreferences.confirmation_reminders?'checked':''}>
+          <i aria-hidden="true"></i>
+        </span>
+        <span>
+          <strong>Confirmación de control</strong>
+          <small>Aviso aproximadamente 24 horas antes si aún no has confirmado.</small>
+        </span>
+      </label>
+
+      <label class="reminder-preference-row">
+        <span class="bodycare-switch">
+          <input type="checkbox" id="reminderPrefAppointment" ${notificationPreferences.appointment_reminders?'checked':''}>
+          <i aria-hidden="true"></i>
+        </span>
+        <span>
+          <strong>Control próximo</strong>
+          <small>Aviso aproximadamente 2 horas antes del control.</small>
+        </span>
+      </label>
+
+      <label class="reminder-preference-row">
+        <span class="bodycare-switch">
+          <input type="checkbox" id="reminderPrefRecord" ${notificationPreferences.record_reminders?'checked':''}>
+          <i aria-hidden="true"></i>
+        </span>
+        <span>
+          <strong>Registro de seguimiento</strong>
+          <small>Aviso cuando superas la frecuencia definida por tu profesional.</small>
+        </span>
+      </label>
     </div>
-    <div class="reminder-save-row">
-      <span id="reminderSaveStatus" class="reminder-save-status saved">Preferencias sincronizadas</span>
+
+    <div class="reminder-save-row reminder-save-actions">
+      <span id="reminderSaveStatus" class="reminder-save-status ${statusClass}">${statusText}</span>
+      <button type="button" id="saveReminderPreferences" class="primary small-btn" ${patientReminderDirty&&!patientReminderSaving?'':'disabled'}>
+        Guardar preferencias
+      </button>
     </div>
-    <div class="engagement-note">Los recordatorios aparecen dentro de BodyCare. Si las notificaciones Push están activas, también pueden llegar aunque la app esté cerrada.</div>
+
+    <div class="engagement-note">Los cambios solo quedan activos después de presionar <strong>Guardar preferencias</strong>. Si Push está habilitado, los avisos también pueden llegar con BodyCare cerrado.</div>
   </section>`;
 }
 
@@ -2621,27 +2675,52 @@ async function syncPatientReminderPlan(renderCard=false){
   try{
     const plan=await dbRpc('bodycare_get_patient_reminder_plan',{});
     patientReminderPlan=Array.isArray(plan)?plan[0]||null:plan;
-    applyReminderPreferencesFromSource(patientReminderPlan);
 
-    if(renderCard && !patientReminderSaving){
-      const old=document.getElementById('patientReminderCard');
-      if(old){
-        const temp=document.createElement('div');
-        temp.innerHTML=patientReminderCardMarkup().trim();
-        const fresh=temp.firstElementChild;
-        if(fresh){
-          old.replaceWith(fresh);
-          bindPatientReminderPreferences();
-        }
-      }
+    if(renderCard && !patientReminderSaving && !patientReminderDirty){
+      renderPatientReminderCard();
     }
   }catch(err){
     console.warn('Patient reminder plan sync failed',err);
   }
 }
 
-async function savePatientReminderPreferences(){
+function renderPatientReminderCard(){
+  const old=document.getElementById('patientReminderCard');
+  if(!old)return;
+
+  const temp=document.createElement('div');
+  temp.innerHTML=patientReminderCardMarkup().trim();
+  const fresh=temp.firstElementChild;
+  if(fresh){
+    old.replaceWith(fresh);
+    bindPatientReminderPreferences();
+  }
+}
+
+function markPatientReminderDirty(){
   if(patientReminderSaving)return;
+  patientReminderDirty=true;
+
+  const status=document.getElementById('reminderSaveStatus');
+  if(status){
+    status.className='reminder-save-status dirty';
+    status.textContent='Cambios sin guardar';
+  }
+
+  const save=document.getElementById('saveReminderPreferences');
+  if(save)save.disabled=false;
+}
+
+async function loadAuthoritativeReminderPreferences(){
+  const pref=await dbRpc('bodycare_get_reminder_preferences',{});
+  const saved=Array.isArray(pref)?pref[0]||null:pref;
+  if(!saved)throw new Error('Supabase no devolvió las preferencias.');
+  applyReminderPreferencesFromSource(saved);
+  return saved;
+}
+
+async function savePatientReminderPreferences(){
+  if(patientReminderSaving||!patientReminderDirty)return;
 
   const appointment=document.getElementById('reminderPrefAppointment')?.checked ?? notificationPreferences.appointment_reminders;
   const confirmation=document.getElementById('reminderPrefConfirmation')?.checked ?? notificationPreferences.confirmation_reminders;
@@ -2651,6 +2730,9 @@ async function savePatientReminderPreferences(){
   setReminderInputsDisabled(true);
   setReminderSaveStatus('saving','Guardando…');
 
+  const save=document.getElementById('saveReminderPreferences');
+  if(save)save.disabled=true;
+
   try{
     await dbRpc('bodycare_save_reminder_preferences',{
       p_appointment_reminders:appointment,
@@ -2658,47 +2740,34 @@ async function savePatientReminderPreferences(){
       p_record_reminders:record
     });
 
-    const rows=await dbGet(`notification_preferences?select=appointment_reminders,confirmation_reminders,record_reminders,updated_at&user_id=eq.${encodeURIComponent(currentUser.id)}&limit=1`);
-    const saved=rows?.[0];
+    const saved=await loadAuthoritativeReminderPreferences();
 
-    if(!saved)throw new Error('Supabase no confirmó las preferencias guardadas.');
+    const confirmed=
+      saved.appointment_reminders===appointment &&
+      saved.confirmation_reminders===confirmation &&
+      saved.record_reminders===record;
 
-    applyReminderPreferencesFromSource(saved);
+    if(!confirmed){
+      throw new Error('La confirmación de Supabase no coincide con los cambios seleccionados.');
+    }
 
-    // Reconcile visible switches with the authoritative database state.
-    const a=document.getElementById('reminderPrefAppointment');
-    const c=document.getElementById('reminderPrefConfirmation');
-    const r=document.getElementById('reminderPrefRecord');
-    if(a)a.checked=notificationPreferences.appointment_reminders;
-    if(c)c.checked=notificationPreferences.confirmation_reminders;
-    if(r)r.checked=notificationPreferences.record_reminders;
-
+    patientReminderDirty=false;
     setReminderSaveStatus('saved','Guardado');
-    await syncPatientReminderPlan(false);
+    showToast('Preferencias guardadas','BodyCare confirmó tus recordatorios en Supabase.','CONTROL_REMINDER');
 
-    setTimeout(()=>{
-      if(!patientReminderSaving)setReminderSaveStatus('saved','Preferencias sincronizadas');
-    },1400);
+    await syncPatientReminderPlan(false);
   }catch(err){
     console.warn('Reminder preference save failed',err);
-    setReminderSaveStatus('error','No se pudo guardar');
-    alert('No fue posible guardar los recordatorios: '+err.message);
 
     try{
-      const plan=await dbRpc('bodycare_get_patient_reminder_plan',{});
-      patientReminderPlan=Array.isArray(plan)?plan[0]||null:plan;
-      applyReminderPreferencesFromSource(patientReminderPlan);
+      await loadAuthoritativeReminderPreferences();
     }catch{}
 
-    const a=document.getElementById('reminderPrefAppointment');
-    const c=document.getElementById('reminderPrefConfirmation');
-    const r=document.getElementById('reminderPrefRecord');
-    if(a)a.checked=notificationPreferences.appointment_reminders;
-    if(c)c.checked=notificationPreferences.confirmation_reminders;
-    if(r)r.checked=notificationPreferences.record_reminders;
+    patientReminderDirty=false;
+    alert('No fue posible guardar los recordatorios: '+err.message);
   }finally{
     patientReminderSaving=false;
-    setReminderInputsDisabled(false);
+    renderPatientReminderCard();
   }
 }
 
@@ -2707,8 +2776,14 @@ function bindPatientReminderPreferences(){
     const el=document.getElementById(id);
     if(!el||el.dataset.reminderBound==='1')return;
     el.dataset.reminderBound='1';
-    el.addEventListener('change',savePatientReminderPreferences);
+    el.addEventListener('change',markPatientReminderDirty);
   });
+
+  const save=document.getElementById('saveReminderPreferences');
+  if(save&&save.dataset.reminderBound!=='1'){
+    save.dataset.reminderBound='1';
+    save.addEventListener('click',savePatientReminderPreferences);
+  }
 }
 
 function patientDoctorView(){
@@ -2816,7 +2891,7 @@ function patientDoctorView(){
   bindPatientSubTabs();
   bindPatientCare();
   bindPatientReminderPreferences();
-  setTimeout(()=>syncPatientReminderPlan(true),0);
+  setTimeout(()=>syncPatientReminderPlan(false),0);
   renderPatientPrescriptionList();
   renderPatientMessageThread();
   renderPatientControls();
@@ -3870,7 +3945,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v20.1'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v20.2'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -5725,7 +5800,7 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];patientReminderPlan=null;patientReminderSaving=false;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){

@@ -515,3 +515,15 @@ https://lsueyras.github.io/pesocare/
 - La interfaz se reconcilia con el valor autoritativo de la base.
 - La sincronización de la tarjeta no puede sobrescribir un cambio mientras está guardándose.
 - `bodycare_get_patient_reminder_plan` ahora crea la fila de preferencias por defecto si falta y devuelve los tres valores de recordatorios.
+
+
+## BodyCare V20.2 — Recordatorios con guardado explícito
+- Los tres recordatorios usan switches visuales reales.
+- Cambiar un switch marca `Cambios sin guardar`.
+- Los cambios solo se persisten al presionar `Guardar preferencias`.
+- Guardado mediante `bodycare_save_reminder_preferences`.
+- Verificación inmediata mediante `bodycare_get_reminder_preferences`.
+- BodyCare comprueba que los tres valores devueltos por Supabase coincidan exactamente con la selección.
+- La sincronización del plan ya no modifica las preferencias.
+- Un refresco Realtime no puede pisar cambios sin guardar.
+- Backend inicializa preferencias para pacientes existentes.

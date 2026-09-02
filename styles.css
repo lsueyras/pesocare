@@ -2396,3 +2396,78 @@ input[data-date-cl].date-invalid{
   opacity:.55;
   cursor:wait;
 }
+
+/* BodyCare V20.2 — selectores de recordatorios confirmados */
+.reminder-preference-row{
+  grid-template-columns:44px minmax(0,1fr) !important;
+  align-items:center !important;
+}
+.bodycare-switch{
+  position:relative;
+  display:inline-block;
+  width:42px;
+  height:24px;
+  flex:0 0 42px;
+}
+.bodycare-switch input{
+  position:absolute;
+  width:1px !important;
+  height:1px !important;
+  opacity:0;
+  pointer-events:none;
+}
+.bodycare-switch i{
+  position:absolute;
+  inset:0;
+  display:block;
+  border-radius:999px;
+  background:#d0d5dd;
+  transition:background .18s ease;
+}
+.bodycare-switch i::after{
+  content:'';
+  position:absolute;
+  top:3px;
+  left:3px;
+  width:18px;
+  height:18px;
+  border-radius:50%;
+  background:#fff;
+  box-shadow:0 1px 3px rgba(16,24,40,.25);
+  transition:transform .18s ease;
+}
+.bodycare-switch input:checked + i{
+  background:#175cd3;
+}
+.bodycare-switch input:checked + i::after{
+  transform:translateX(18px);
+}
+.bodycare-switch input:focus-visible + i{
+  outline:3px solid rgba(23,92,211,.2);
+  outline-offset:2px;
+}
+.bodycare-switch input:disabled + i{
+  opacity:.5;
+}
+.reminder-save-actions{
+  align-items:center;
+  justify-content:space-between !important;
+  gap:10px;
+}
+.reminder-save-status.dirty{
+  background:#fffaeb;
+  color:#b54708;
+}
+#saveReminderPreferences:disabled{
+  opacity:.5;
+  cursor:not-allowed;
+}
+@media(max-width:500px){
+  .reminder-save-actions{
+    flex-direction:column;
+    align-items:stretch;
+  }
+  #saveReminderPreferences{
+    width:100%;
+  }
+}
