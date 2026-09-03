@@ -1,5 +1,5 @@
-const CACHE='bodycare-v23-1';
-const CORE=['./','./index.html','./styles.css?v=23.1-bodycare','./app.js?v=23.1-bodycare','./manifest.webmanifest','./icon.svg','./brand-logo.png','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
+const CACHE='bodycare-v24';
+const CORE=['./','./index.html','./styles.css?v=24-bodycare','./app.js?v=24-bodycare','./manifest.webmanifest','./icon.svg','./brand-logo.png','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
 
 self.addEventListener('install',event=>{
   self.skipWaiting();

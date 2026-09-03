@@ -606,3 +606,29 @@ https://lsueyras.github.io/pesocare/
   - gráficos del informe longitudinal.
 - Si existen registros posteriores a la duración planificada, el eje se extiende para no ocultarlos.
 - Sin cambios de backend.
+
+
+## BodyCare V24 — Acceso biométrico / Passkeys
+- Primer acceso mantiene correo + contraseña.
+- Después del login BodyCare ofrece enrolar una passkey.
+- Siguientes sesiones pueden abrirse con Face ID, huella o Windows Hello.
+- WebAuthn se implementa directamente contra Supabase Auth:
+  - `/passkeys/registration/options`
+  - `/passkeys/registration/verify`
+  - `/passkeys/authentication/options`
+  - `/passkeys/authentication/verify`
+- No se almacena contraseña ni biometría.
+- Gate biométrico al iniciar una nueva sesión del navegador/PWA.
+- Refrescos dentro de la misma sesión no vuelven a pedir biometría.
+- Fallback permanente: `Usar correo y contraseña`.
+- Nuevo botón global 🔐 Seguridad:
+  - agregar passkey;
+  - listar passkeys;
+  - renombrar;
+  - eliminar.
+- Requiere activar Passkeys una sola vez en Supabase Authentication → Passkeys.
+- Configuración actual:
+  - RP Display Name: BodyCare
+  - RP ID: lsueyras.github.io
+  - Origin: https://lsueyras.github.io
+- IMPORTANTE: cambiar posteriormente el RP ID a bodycare.cl requiere volver a enrolar passkeys.

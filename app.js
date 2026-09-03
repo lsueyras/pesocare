@@ -6,12 +6,15 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='23.1';
+const APP_VERSION='24.0';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
 const REMEMBER_KEY='pesocare_remember_me';
 const SIGNUP_COOLDOWN_KEY='pesocare_signup_cooldown_until';
+const PASSKEY_LOCAL_KEY='bodycare_passkey_enrolled_v1';
+const PASSKEY_UNLOCKED_KEY='bodycare_passkey_unlocked_session_v1';
+const PASSKEY_OFFER_PREFIX='bodycare_passkey_offer_';
 
 const app=document.getElementById('app');
 let session=null, currentUser=null, profile=null, records=[];
@@ -1004,6 +1007,7 @@ function portalTabs(){
 
 function bindCommonHeader(){
   document.getElementById('logout')?.addEventListener('click',logout);
+  document.getElementById('securityBtn')?.addEventListener('click',showSecurityCenter);
   document.getElementById('notificationBtn')?.addEventListener('click',showNotificationCenter);
   updateHeaderNotificationUI();
   document.querySelectorAll('[data-portal]').forEach(btn=>{
@@ -2037,12 +2041,327 @@ function updateSignupCooldownUI(){
   signupTimer=setInterval(render,1000);
 }
 
+
+function passkeyClientSupported(){
+  return !!(
+    window.isSecureContext &&
+    window.PublicKeyCredential &&
+    navigator.credentials &&
+    typeof navigator.credentials.create==='function' &&
+    typeof navigator.credentials.get==='function'
+  );
+}
+async function platformAuthenticatorAvailable(){
+  if(!passkeyClientSupported())return false;
+  try{
+    if(typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable==='function'){
+      return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    }
+  }catch{}
+  return true;
+}
+function base64UrlEncode(buffer){
+  const bytes=new Uint8Array(buffer);
+  let binary='';
+  bytes.forEach(b=>binary+=String.fromCharCode(b));
+  return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function passkeyCreationOptions(options){
+  const copy=structuredClone(options||{});
+  copy.challenge=base64UrlToUint8Array(copy.challenge);
+  if(copy.user?.id)copy.user.id=base64UrlToUint8Array(copy.user.id);
+  if(Array.isArray(copy.excludeCredentials)){
+    copy.excludeCredentials=copy.excludeCredentials.map(c=>({...c,id:base64UrlToUint8Array(c.id)}));
+  }
+  copy.authenticatorSelection={
+    ...(copy.authenticatorSelection||{}),
+    authenticatorAttachment:'platform',
+    residentKey:'required',
+    requireResidentKey:true,
+    userVerification:'required'
+  };
+  return copy;
+}
+function passkeyRequestOptions(options){
+  const copy=structuredClone(options||{});
+  copy.challenge=base64UrlToUint8Array(copy.challenge);
+  if(Array.isArray(copy.allowCredentials)){
+    copy.allowCredentials=copy.allowCredentials.map(c=>({...c,id:base64UrlToUint8Array(c.id)}));
+  }
+  copy.userVerification='required';
+  return copy;
+}
+function serializePasskeyCredential(credential){
+  if(!credential)return null;
+  const response=credential.response;
+  const out={
+    id:credential.id,
+    rawId:base64UrlEncode(credential.rawId),
+    type:credential.type,
+    authenticatorAttachment:credential.authenticatorAttachment||undefined,
+    clientExtensionResults:credential.getClientExtensionResults?.()||{},
+    response:{
+      clientDataJSON:base64UrlEncode(response.clientDataJSON)
+    }
+  };
+  if(response.attestationObject){
+    out.response.attestationObject=base64UrlEncode(response.attestationObject);
+    if(typeof response.getTransports==='function')out.response.transports=response.getTransports();
+  }
+  if(response.authenticatorData)out.response.authenticatorData=base64UrlEncode(response.authenticatorData);
+  if(response.signature)out.response.signature=base64UrlEncode(response.signature);
+  if('userHandle' in response)out.response.userHandle=response.userHandle?base64UrlEncode(response.userHandle):null;
+  return out;
+}
+function passkeyFriendlyError(err){
+  const raw=String(err?.message||err||'');
+  const code=String(err?.data?.code||err?.data?.error_code||'');
+  if(err?.name==='NotAllowedError')return 'La verificación fue cancelada o el dispositivo no pudo completar la biometría.';
+  if(err?.name==='SecurityError')return 'El dominio de BodyCare no coincide con la configuración biométrica. Revisa el Relying Party ID en Supabase.';
+  if(/passkey_disabled/i.test(raw)||code==='passkey_disabled')return 'El acceso biométrico todavía no está habilitado en Supabase Auth.';
+  if(/credential.*exists/i.test(raw)||code==='webauthn_credential_exists')return 'Este autenticador ya está registrado para tu cuenta.';
+  if(/credential.*not found/i.test(raw)||code==='webauthn_credential_not_found')return 'No se encontró una passkey válida para esta cuenta en el dispositivo.';
+  if(/challenge.*expired/i.test(raw)||code==='webauthn_challenge_expired')return 'La solicitud biométrica expiró. Inténtalo nuevamente.';
+  if(/verification failed/i.test(raw)||code==='webauthn_verification_failed')return 'No fue posible validar la credencial biométrica.';
+  return raw||'No fue posible completar el acceso biométrico.';
+}
+async function passkeyAuthFetch(path,{method='POST',token=null,body=null}={}){
+  const opts={method,headers:authHeaders(token)};
+  if(body!==null)opts.body=JSON.stringify(body);
+  return jsonFetch(`${SUPABASE_URL}/auth/v1/passkeys${path}`,opts);
+}
+async function listPasskeys(){
+  if(!session?.access_token)return [];
+  return (await passkeyAuthFetch('/',{method:'GET',token:session.access_token}))||[];
+}
+async function registerBodyCarePasskey(){
+  if(!session?.access_token||!currentUser?.id)throw new Error('Debes iniciar sesión antes de activar biometría.');
+  if(!passkeyClientSupported())throw new Error('Este navegador o dispositivo no admite acceso biométrico WebAuthn.');
+
+  const available=await platformAuthenticatorAvailable();
+  if(!available)throw new Error('No se encontró un autenticador biométrico o de dispositivo disponible.');
+
+  const start=await passkeyAuthFetch('/registration/options',{token:session.access_token,body:{}});
+  const credential=await navigator.credentials.create({publicKey:passkeyCreationOptions(start.options)});
+  if(!credential)throw new Error('No se creó la credencial biométrica.');
+
+  const created=await passkeyAuthFetch('/registration/verify',{
+    token:session.access_token,
+    body:{challenge_id:start.challenge_id,credential:serializePasskeyCredential(credential)}
+  });
+
+  localStorage.setItem(PASSKEY_LOCAL_KEY,'true');
+  sessionStorage.setItem(PASSKEY_UNLOCKED_KEY,'true');
+  localStorage.setItem(PASSKEY_OFFER_PREFIX+currentUser.id,'done');
+  return created;
+}
+async function signInWithBodyCarePasskey(){
+  if(!passkeyClientSupported())throw new Error('Este navegador o dispositivo no admite acceso biométrico.');
+
+  const available=await platformAuthenticatorAvailable();
+  if(!available)throw new Error('No se encontró un autenticador biométrico o de dispositivo disponible.');
+
+  const start=await passkeyAuthFetch('/authentication/options',{body:{}});
+  const credential=await navigator.credentials.get({publicKey:passkeyRequestOptions(start.options)});
+  if(!credential)throw new Error('No se recibió una credencial biométrica.');
+
+  const data=await passkeyAuthFetch('/authentication/verify',{
+    body:{challenge_id:start.challenge_id,credential:serializePasskeyCredential(credential)}
+  });
+
+  if(!data?.access_token)throw new Error('Supabase no devolvió una sesión después de verificar la biometría.');
+
+  saveRememberPreference(true);
+  saveSession({
+    access_token:data.access_token,
+    refresh_token:data.refresh_token,
+    expires_at:Date.now()+Number(data.expires_in||3600)*1000
+  },true);
+  sessionStorage.setItem(PASSKEY_UNLOCKED_KEY,'true');
+  localStorage.setItem(PASSKEY_LOCAL_KEY,'true');
+
+  if(!(await ensureSession()))throw new Error('No fue posible iniciar la sesión biométrica.');
+  await loadData();
+  render();
+}
+function passkeyLoginButtonMarkup(){
+  if(!passkeyClientSupported())return '';
+  return `<div class="passkey-login-block">
+    <button type="button" class="passkey-primary-btn" id="passkeyLoginBtn">
+      <span class="passkey-symbol">◎</span>
+      <span><strong>Ingresar con biometría</strong><small>Face ID · huella · Windows Hello</small></span>
+    </button>
+    <div class="passkey-login-divider"><span>o usa tu contraseña</span></div>
+  </div>`;
+}
+async function handlePasskeyLogin(){
+  const btn=document.getElementById('passkeyLoginBtn');
+  const msg=document.getElementById('authMsg')||document.getElementById('biometricGateMsg');
+  if(btn){btn.disabled=true;btn.classList.add('working')}
+  if(msg){msg.className='muted';msg.textContent='Esperando validación del dispositivo…'}
+  try{
+    await signInWithBodyCarePasskey();
+  }catch(err){
+    if(msg){msg.className='error';msg.textContent=passkeyFriendlyError(err)}
+  }finally{
+    if(btn){btn.disabled=false;btn.classList.remove('working')}
+  }
+}
+function biometricGateView(message=''){
+  app.innerHTML=shell(`
+    <section class="card auth-card biometric-gate-card">
+      ${brandBlock('Acceso seguro')}
+      <div class="biometric-gate-icon">◎</div>
+      <h2 class="section-title">Desbloquear BodyCare</h2>
+      <p class="muted">Usa la biometría o seguridad de este dispositivo para acceder. No necesitas escribir tu correo ni contraseña.</p>
+      ${message?`<div class="notice success">${esc(message)}</div>`:''}
+      <button type="button" class="passkey-primary-btn biometric-unlock-btn" id="passkeyLoginBtn">
+        <span class="passkey-symbol">◎</span>
+        <span><strong>Desbloquear con biometría</strong><small>Face ID · huella · Windows Hello</small></span>
+      </button>
+      <button type="button" class="linkbtn biometric-password-fallback" id="usePasswordBtn">Usar correo y contraseña</button>
+      <p id="biometricGateMsg" class="error"></p>
+    </section>`);
+  document.getElementById('passkeyLoginBtn')?.addEventListener('click',handlePasskeyLogin);
+  document.getElementById('usePasswordBtn')?.addEventListener('click',()=>{
+    sessionStorage.setItem(PASSKEY_UNLOCKED_KEY,'password');
+    loginView();
+  });
+}
+async function maybeOfferPasskeyEnrollment(){
+  if(!currentUser?.id||!session?.access_token||!passkeyClientSupported())return;
+  if(localStorage.getItem(PASSKEY_LOCAL_KEY)==='true')return;
+  if(localStorage.getItem(PASSKEY_OFFER_PREFIX+currentUser.id)==='done')return;
+
+  const available=await platformAuthenticatorAvailable();
+  if(!available)return;
+
+  document.getElementById('passkeyEnrollmentOverlay')?.remove();
+  document.body.insertAdjacentHTML('beforeend',`
+    <div class="passkey-overlay" id="passkeyEnrollmentOverlay">
+      <section class="passkey-enroll-modal" role="dialog" aria-modal="true">
+        <div class="biometric-gate-icon compact">◎</div>
+        <h3>Activar acceso biométrico</h3>
+        <p>Desde el próximo acceso podrás entrar a BodyCare con Face ID, huella o Windows Hello sin escribir usuario y contraseña.</p>
+        <div class="passkey-enroll-actions">
+          <button type="button" class="primary" id="enrollPasskeyNow">Activar ahora</button>
+          <button type="button" class="secondary" id="enrollPasskeyLater">Más tarde</button>
+        </div>
+        <p id="passkeyEnrollMsg" class="error"></p>
+      </section>
+    </div>
+  `);
+  document.getElementById('enrollPasskeyNow')?.addEventListener('click',async()=>{
+    const btn=document.getElementById('enrollPasskeyNow');
+    const msg=document.getElementById('passkeyEnrollMsg');
+    if(btn)btn.disabled=true;
+    if(msg){msg.className='muted';msg.textContent='Preparando el acceso seguro…'}
+    try{
+      await registerBodyCarePasskey();
+      document.getElementById('passkeyEnrollmentOverlay')?.remove();
+      showToast('Biometría activada','Este dispositivo ya puede ingresar sin contraseña.','PUSH_TEST');
+    }catch(err){
+      if(msg){msg.className='error';msg.textContent=passkeyFriendlyError(err)}
+      if(btn)btn.disabled=false;
+    }
+  });
+  document.getElementById('enrollPasskeyLater')?.addEventListener('click',()=>{
+    localStorage.setItem(PASSKEY_OFFER_PREFIX+currentUser.id,'done');
+    document.getElementById('passkeyEnrollmentOverlay')?.remove();
+  });
+}
+function passkeyDate(value){
+  if(!value)return 'Nunca';
+  try{return new Date(value).toLocaleString('es-CL',{dateStyle:'medium',timeStyle:'short'})}catch{return value}
+}
+async function securityCenterMarkup(){
+  const supported=passkeyClientSupported();
+  let keys=[];
+  let loadError='';
+  if(supported){
+    try{keys=await listPasskeys()}catch(err){loadError=passkeyFriendlyError(err)}
+  }
+  return `<div class="security-center-content">
+    <div class="security-summary ${supported?'supported':'unsupported'}">
+      <div class="security-lock-icon">🔐</div>
+      <div><strong>Acceso biométrico / Passkey</strong><span>${supported?'Este dispositivo admite acceso seguro sin contraseña.':'Este navegador no admite WebAuthn.'}</span></div>
+    </div>
+    ${loadError?`<div class="notice warning">${esc(loadError)}</div>`:''}
+    ${supported?`<button type="button" class="primary" id="securityAddPasskey">Agregar este dispositivo</button>`:''}
+    <div class="security-key-list">
+      ${keys.length?keys.map(k=>`<div class="security-key-row">
+        <div><strong>${esc(k.friendly_name||'Passkey')}</strong><span>Creada ${passkeyDate(k.created_at)}${k.last_used_at?` · último uso ${passkeyDate(k.last_used_at)}`:''}</span></div>
+        <div class="security-key-actions">
+          <button type="button" class="secondary small-btn" data-rename-passkey="${k.id}" data-passkey-name="${esc(k.friendly_name||'Passkey')}">Renombrar</button>
+          <button type="button" class="danger-btn small-btn" data-delete-passkey="${k.id}">Eliminar</button>
+        </div>
+      </div>`).join(''):'<div class="empty-state">No hay passkeys registradas en esta cuenta.</div>'}
+    </div>
+    <div class="security-help">La contraseña se mantiene como método de recuperación. BodyCare no recibe ni almacena tu huella, rostro o PIN.</div>
+  </div>`;
+}
+async function renderSecurityCenter(){
+  const body=document.getElementById('securityCenterBody');
+  if(!body)return;
+  body.innerHTML='<div class="muted">Cargando seguridad…</div>';
+  body.innerHTML=await securityCenterMarkup();
+  bindSecurityCenterActions();
+}
+async function renamePasskey(id,currentName){
+  const name=prompt('Nombre para este dispositivo o passkey:',currentName||'Mi dispositivo');
+  if(!name||!name.trim())return;
+  try{
+    await passkeyAuthFetch('/'+encodeURIComponent(id),{
+      method:'PATCH',
+      token:session.access_token,
+      body:{friendly_name:name.trim().slice(0,120)}
+    });
+    await renderSecurityCenter();
+  }catch(err){alert(passkeyFriendlyError(err))}
+}
+async function deletePasskey(id){
+  if(!confirm('¿Eliminar este acceso biométrico? El dispositivo dejará de poder usar esa passkey.'))return;
+  try{
+    await passkeyAuthFetch('/'+encodeURIComponent(id),{method:'DELETE',token:session.access_token});
+    const remaining=await listPasskeys();
+    if(!remaining.length)localStorage.removeItem(PASSKEY_LOCAL_KEY);
+    await renderSecurityCenter();
+  }catch(err){alert(passkeyFriendlyError(err))}
+}
+function bindSecurityCenterActions(){
+  document.getElementById('securityAddPasskey')?.addEventListener('click',async()=>{
+    const btn=document.getElementById('securityAddPasskey');if(btn)btn.disabled=true;
+    try{
+      await registerBodyCarePasskey();
+      await renderSecurityCenter();
+      showToast('Acceso agregado','La passkey quedó registrada correctamente.','PUSH_TEST');
+    }catch(err){alert(passkeyFriendlyError(err));if(btn)btn.disabled=false}
+  });
+  document.querySelectorAll('[data-rename-passkey]').forEach(btn=>btn.addEventListener('click',()=>renamePasskey(btn.dataset.renamePasskey,btn.dataset.passkeyName)));
+  document.querySelectorAll('[data-delete-passkey]').forEach(btn=>btn.addEventListener('click',()=>deletePasskey(btn.dataset.deletePasskey)));
+}
+async function showSecurityCenter(){
+  document.getElementById('securityCenterOverlay')?.remove();
+  document.body.insertAdjacentHTML('beforeend',`
+    <div class="security-overlay" id="securityCenterOverlay">
+      <section class="security-modal" role="dialog" aria-modal="true">
+        <div class="security-modal-head"><div><h3>Seguridad y acceso</h3><span>Administra la biometría de tu cuenta</span></div><button type="button" class="modal-close" id="closeSecurityCenter">×</button></div>
+        <div id="securityCenterBody"><div class="muted">Cargando seguridad…</div></div>
+      </section>
+    </div>
+  `);
+  document.getElementById('closeSecurityCenter')?.addEventListener('click',()=>document.getElementById('securityCenterOverlay')?.remove());
+  document.getElementById('securityCenterOverlay')?.addEventListener('click',e=>{if(e.target?.id==='securityCenterOverlay')e.currentTarget.remove()});
+  await renderSecurityCenter();
+}
+
 function loginView(message=''){
   app.innerHTML=shell(`
     <section class="card auth-card">
       ${brandBlock('Seguimiento personal · Salud y progreso')}
       <p class="muted">Registra tu evolución, revisa tu historial, mantente conectado con tu médico y sigue tus indicaciones en un solo lugar.</p>
       ${message?`<div class="notice success">${esc(message)}</div>`:''}
+      ${passkeyLoginButtonMarkup()}
       <form id="authForm" style="margin-top:16px">
         <label>Correo</label>
         <input id="email" type="email" inputmode="email" autocomplete="email" required placeholder="tu@correo.com">
@@ -2067,6 +2386,7 @@ function loginView(message=''){
         <p id="authMsg" class="error"></p>
       </form>
     </section>`);
+  document.getElementById('passkeyLoginBtn')?.addEventListener('click',handlePasskeyLogin);
   document.getElementById('authForm').addEventListener('submit',e=>auth(e,false));
   document.getElementById('signup').addEventListener('click',e=>auth(e,true));
   document.getElementById('forgot').addEventListener('click',forgotPassword);
@@ -2110,8 +2430,10 @@ async function auth(e,signup){
         },remember);
 
         await ensureSession();
+        sessionStorage.setItem(PASSKEY_UNLOCKED_KEY,'true');
         await loadData();
         render();
+        setTimeout(()=>maybeOfferPasskeyEnrollment(),350);
       }else{
         msg.className='notice success';
         msg.textContent='Solicitud recibida. Revisa tu correo y Spam para confirmar la cuenta. Por seguridad, un nuevo correo podrá solicitarse después de aproximadamente 60 segundos.';
@@ -2130,8 +2452,10 @@ async function auth(e,signup){
       },remember);
 
       if(await ensureSession()){
+        sessionStorage.setItem(PASSKEY_UNLOCKED_KEY,'true');
         await loadData();
         render();
+        setTimeout(()=>maybeOfferPasskeyEnrollment(),350);
       }
     }
   }catch(err){
@@ -2317,6 +2641,9 @@ function header(){
         <i id="realtimeDot" class="live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}"></i>
         <span id="realtimeText">${realtimeStatus==='live'?'En vivo':realtimeStatus==='connecting'?'Conectando…':'Sin conexión'}</span>
       </span>
+      <button class="security-header-button" id="securityBtn" type="button" aria-label="Seguridad y acceso" title="Seguridad y acceso">
+        <span aria-hidden="true">🔐</span>
+      </button>
       <button class="notification-button" id="notificationBtn" type="button" aria-label="Notificaciones">
         <span aria-hidden="true">🔔</span>
         <b id="notificationBadge" class="notification-badge ${count?'':'hidden-badge'}">${count>99?'99+':count}</b>
@@ -4364,7 +4691,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v23.1'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v24.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -6630,18 +6957,31 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();sessionStorage.removeItem(PASSKEY_UNLOCKED_KEY);session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){
   try{
     const confirmed=captureConfirmationHash();
+    const localPasskey=localStorage.getItem(PASSKEY_LOCAL_KEY)==='true';
+    const unlocked=sessionStorage.getItem(PASSKEY_UNLOCKED_KEY)==='true';
+
+    // A new PWA/browser session with a locally enrolled passkey starts behind the biometric gate.
+    // Normal page refreshes within the same session remain unlocked.
+    if(localPasskey&&!unlocked&&passkeyClientSupported()){
+      biometricGateView(confirmed?'Correo confirmado. Ya puedes acceder con biometría.':'');
+      return;
+    }
+
     if(await ensureSession()){
+      sessionStorage.setItem(PASSKEY_UNLOCKED_KEY,'true');
       await loadData();
       render();
       startRealtime();
       await handleLaunchNotification();
-    } else loginView(confirmed?'Correo confirmado. Ya puedes ingresar.':'');
+    } else {
+      loginView(confirmed?'Correo confirmado. Ya puedes ingresar.':'');
+    }
   }catch(err){
     console.error(err);
     loginView();

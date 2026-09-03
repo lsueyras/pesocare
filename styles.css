@@ -2579,3 +2579,47 @@ input[data-date-cl].date-invalid{
 .nutrition-editor-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.nutrition-custom-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media(max-width:900px){.nutrition-targets,.nutrition-target-editor{grid-template-columns:repeat(2,minmax(0,1fr))}.nutrition-editor-grid,.nutrition-custom-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.nutrition-targets{grid-template-columns:repeat(2,minmax(0,1fr))}.nutrition-guidance-grid,.nutrition-text-grid,.nutrition-log-grid{grid-template-columns:1fr}.nutrition-date-card{align-items:stretch;flex-direction:column}.nutrition-date-card button{width:100%}.nutrition-plan-item-row{flex-direction:column}.nutrition-row-actions>*{flex:1}.nutrition-editor-grid,.nutrition-custom-grid{grid-template-columns:1fr}}
+
+/* BodyCare V24 — Acceso biométrico / Passkeys */
+.passkey-login-block{margin:16px 0 4px}
+.passkey-primary-btn{
+  width:100%;display:flex;align-items:center;justify-content:center;gap:10px;min-height:54px;
+  padding:9px 13px;border:1px solid #84adff;border-radius:13px;background:#eff8ff;color:#1849a9;
+  font:inherit;cursor:pointer;text-align:left
+}
+.passkey-primary-btn:hover{background:#d1e9ff}
+.passkey-primary-btn:disabled{opacity:.6;cursor:wait}
+.passkey-primary-btn span:last-child{display:flex;flex-direction:column}
+.passkey-primary-btn strong{font-size:.85rem}.passkey-primary-btn small{margin-top:2px;color:#475467;font-size:.66rem;font-weight:500}
+.passkey-symbol{display:grid!important;place-items:center!important;width:34px;height:34px;border-radius:50%;background:#175cd3;color:#fff;font-size:1.25rem;flex:0 0 34px}
+.passkey-login-divider{display:flex;align-items:center;gap:9px;margin:13px 0 2px;color:#98a2b3;font-size:.65rem}
+.passkey-login-divider:before,.passkey-login-divider:after{content:'';height:1px;flex:1;background:#eaecf0}
+.biometric-gate-card{text-align:center}
+.biometric-gate-icon{display:grid;place-items:center;width:76px;height:76px;margin:16px auto 10px;border-radius:50%;background:#eff8ff;color:#175cd3;font-size:2.4rem}
+.biometric-gate-icon.compact{width:54px;height:54px;margin:0 auto 10px;font-size:1.6rem}
+.biometric-unlock-btn{margin-top:18px}
+.biometric-password-fallback{margin:14px auto 0}
+.passkey-overlay,.security-overlay{position:fixed;inset:0;z-index:11000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(16,24,40,.58);backdrop-filter:blur(2px)}
+.passkey-enroll-modal,.security-modal{width:min(540px,100%);max-height:calc(100vh - 36px);overflow:auto;padding:22px;border-radius:18px;background:#fff;box-shadow:0 24px 70px rgba(16,24,40,.28)}
+.passkey-enroll-modal{text-align:center}.passkey-enroll-modal h3{margin:0;color:#101828}.passkey-enroll-modal p{color:#475467;font-size:.8rem;line-height:1.45}
+.passkey-enroll-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
+.security-header-button{position:relative;display:grid;place-items:center;width:42px;height:42px;padding:0;border:1px solid #d0d5dd;border-radius:12px;background:#fff;cursor:pointer;font-size:1rem}
+.security-header-button:hover{background:#f9fafb}
+.security-modal{padding:0;overflow:hidden}
+.security-modal-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:17px 18px;border-bottom:1px solid #eaecf0}
+.security-modal-head h3{margin:0;font-size:1rem}.security-modal-head span{display:block;margin-top:2px;color:#667085;font-size:.68rem}
+.modal-close{width:34px;height:34px;border:1px solid #d0d5dd;border-radius:10px;background:#fff;color:#475467;font-size:1.2rem;cursor:pointer}
+.security-center-content{padding:18px}
+.security-summary{display:flex;align-items:center;gap:11px;padding:12px;border:1px solid #e4e7ec;border-radius:13px;background:#f9fafb;margin-bottom:12px}
+.security-lock-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#eff8ff;font-size:1.2rem}
+.security-summary strong{display:block;color:#344054;font-size:.8rem}.security-summary span{display:block;margin-top:2px;color:#667085;font-size:.67rem}
+.security-key-list{display:flex;flex-direction:column;margin-top:14px}
+.security-key-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-bottom:1px solid #eaecf0}
+.security-key-row:last-child{border-bottom:0}.security-key-row strong{display:block;color:#344054;font-size:.76rem}.security-key-row span{display:block;margin-top:3px;color:#667085;font-size:.63rem}
+.security-key-actions{display:flex;gap:5px;flex-wrap:wrap}.security-help{margin-top:12px;padding:9px 10px;border-radius:10px;background:#f9fafb;color:#667085;font-size:.67rem;line-height:1.4}
+@media(max-width:520px){
+  .passkey-enroll-actions{grid-template-columns:1fr}
+  .security-key-row{align-items:stretch;flex-direction:column}
+  .security-key-actions>*{flex:1}
+  .security-header-button{width:40px;height:40px}
+}
