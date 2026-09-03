@@ -553,3 +553,56 @@ https://lsueyras.github.io/pesocare/
   - Cancelar.
 - El informe sin Timeline mantiene todos los demás bloques clínico-operativos.
 - Sin cambios de backend.
+
+## BodyCare V22 — Plan de Seguimiento + Objetivos Compartidos
+- Nueva pestaña paciente Mi plan.
+- Objetivos compartidos: peso, circunferencia, registro o personalizados.
+- Médico crea/edita objetivos, valores meta, fecha y estado.
+- Médico asigna acciones/hitos y administra su estado.
+- Paciente inicia/completa acciones y comparte nota de avance.
+- Progreso consolidado de acciones.
+- Auditoría en care_plan_events.
+- Push/Realtime: CARE_PLAN_UPDATED y CARE_ACTION_UPDATED.
+- Timeline incorpora categoría Plan.
+- Informe longitudinal incorpora Plan de seguimiento.
+- BodyCare no genera recomendaciones clínicas automáticas.
+
+## BodyCare V23 — Nutrición & Diario Alimentario
+- Escritorio médico: nueva `Indicación nutricional`.
+- Plantilla `Plan Nutricional Detox` basada en Iniciando H.docx.
+- Horarios base: 08:00, 10:30, 14:00, 17:00, 20:00.
+- Programa ajustable:
+  - metas diarias de kcal, proteína, azúcares totales y grasa;
+  - instrucciones;
+  - lista evitar / consumo libre;
+  - alimentos por comida;
+  - porciones;
+  - agregar/quitar alimentos;
+  - catálogo personalizado desde etiqueta nutricional.
+- Catálogo base con valores por 100 g y fuente/calidad de referencia.
+- Paciente: nueva pestaña `Nutrición`.
+- Registro diario por Desayuno, Snack AM, Almuerzo, Snack PM y Cena.
+- Cálculo por gramos y resumen diario vs pauta.
+- El paciente puede eliminar registros del día.
+- Productos con valores variables muestran recomendación de verificar etiqueta.
+- Push/Realtime: `NUTRITION_PLAN_UPDATED`.
+
+
+## BodyCare V23.1 — Gráficos con todas las mediciones
+- Ya no se consolida un único valor por semana.
+- Cada registro de peso se dibuja como un punto independiente.
+- Cada registro de circunferencia abdominal se dibuja como un punto independiente.
+- La posición horizontal usa la fecha exacta dentro de la semana:
+  - semana completa + fracción de días.
+- Varias mediciones dentro de una misma semana aparecen separadas y unidas por la línea.
+- Tooltip de cada punto:
+  - fecha;
+  - semana + días;
+  - valor exacto.
+- Aplica a:
+  - dashboard paciente;
+  - informe PDF/impresión del paciente;
+  - ficha del paciente en escritorio médico;
+  - gráficos del informe longitudinal.
+- Si existen registros posteriores a la duración planificada, el eje se extiende para no ocultarlos.
+- Sin cambios de backend.

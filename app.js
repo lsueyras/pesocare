@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='21.2';
+const APP_VERSION='23.1';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -17,6 +17,10 @@ const app=document.getElementById('app');
 let session=null, currentUser=null, profile=null, records=[];
 let account=null, roles=[], activePortal='PATIENT';
 let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], patientControls=[], supportTickets=[];
+let patientCarePlan={goals:[],actions:[]}, patientCarePlanDoctorId=null, patientCarePlanSyncing=false;
+let patientNutritionPlan={plan:null,items:[]}, patientNutritionCatalog=[], patientNutritionDay=null;
+let patientNutritionDoctorId=null, patientNutritionDate=today(), patientNutritionSyncing=false;
+let editingNutritionPlanItemId=null;
 let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
 let doctorPriorities=[], doctorAlertSettings=null;
 let doctorAgenda=[], doctorAgendaMode='TODAY', doctorAgendaSyncing=false;
@@ -25,6 +29,7 @@ let doctorTimelineFilter='ALL', doctorTimelineLastSync=0;
 let adminUsers=[], adminTickets=[], adminLoaded=false;
 let editingPrescriptionId=null;
 let editingWeightRecordId=null;
+let editingCareGoalId=null, editingCareActionId=null;
 let notifications=[];
 let realtimeSocket=null, realtimeHeartbeat=null, realtimeReconnectTimer=null;
 let realtimeAttempts=0, realtimeRef=0, realtimeJoinRef=null, realtimeTopic=null;
@@ -1038,14 +1043,18 @@ function formatDateTime(value){
 const PATIENT_MEDICAL_NOTIFICATION_TYPES=[
   'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED',
   'NEW_PRESCRIPTION','PRESCRIPTION_UPDATED','PRESCRIPTION_REMOVED',
-  'NEW_CONTROL','CONTROL_CANCELLED','CONTROL_COMPLETED','CONTROL_NO_SHOW','CONTROL_CONFIRMATION_REMINDER','CONTROL_REMINDER','CONTROL_CONFIRMATION_REMINDER','CONTROL_REMINDER'
+  'NEW_CONTROL','CONTROL_CANCELLED','CONTROL_COMPLETED','CONTROL_NO_SHOW',
+  'CONTROL_CONFIRMATION_REMINDER','CONTROL_REMINDER'
 ];
+
+const CARE_PLAN_NOTIFICATION_TYPES=['CARE_PLAN_UPDATED','CARE_ACTION_UPDATED'];
+const NUTRITION_NOTIFICATION_TYPES=['NUTRITION_PLAN_UPDATED'];
 
 const DOCTOR_PATIENT_CONTEXT_NOTIFICATION_TYPES=[
   'NEW_MESSAGE','MESSAGE_DELETED','CONVERSATION_CLEARED',
   'NEW_CONTROL','CONTROL_CANCELLED','CONTROL_CONFIRMED',
   'NEW_WEIGHT','WEIGHT_UPDATED','WEIGHT_REMOVED',
-  'CLINICAL_ALERT'
+  'CLINICAL_ALERT','CARE_PLAN_UPDATED','CARE_ACTION_UPDATED'
 ];
 
 function isActionableUnread(n){
@@ -1374,6 +1383,9 @@ function notificationIcon(type){
     CONTROL_CONFIRMATION_REMINDER:'⏰',
     CONTROL_REMINDER:'⏱️',
     RECORD_REMINDER:'⚖️',
+    CARE_PLAN_UPDATED:'🎯',
+    CARE_ACTION_UPDATED:'✅',
+    NUTRITION_PLAN_UPDATED:'🥗',
     CLINICAL_ALERT:'🔴',
     WEIGHT_UPDATED:'✏️',
     WEIGHT_REMOVED:'🗑️'
@@ -1496,6 +1508,9 @@ function notificationDestinationLabel(n){
     CONTROL_CONFIRMATION_REMINDER:'Confirmar control',
     CONTROL_REMINDER:'Ver control',
     RECORD_REMINDER:'Registrar seguimiento',
+    CARE_PLAN_UPDATED:'Ver mi plan',
+    CARE_ACTION_UPDATED:'Ver mi plan',
+    NUTRITION_PLAN_UPDATED:'Ver nutrición',
     CLINICAL_ALERT:'Revisar paciente',
     WEIGHT_UPDATED:'Ver seguimiento',
     WEIGHT_REMOVED:'Ver seguimiento'
@@ -1625,6 +1640,32 @@ async function openNotificationById(id){
       await loadData();
       render();
       setTimeout(()=>document.getElementById('patientControlsSection')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
+      return;
+    }
+  }
+
+  if(NUTRITION_NOTIFICATION_TYPES.includes(n.type)&&hasRole('PATIENT')){
+    activePortal='PATIENT';activePatientTab='NUTRITION';
+    localStorage.setItem('pesocare_active_portal','PATIENT');
+    localStorage.setItem('pesocare_patient_tab','NUTRITION');
+    if(n.related_user_id)localStorage.setItem('bodycare_selected_nutrition_doctor',n.related_user_id);
+    await loadData();render();
+    return;
+  }
+
+  if(CARE_PLAN_NOTIFICATION_TYPES.includes(n.type)){
+    if(hasRole('DOCTOR')&&n.related_user_id&&n.related_user_id!==currentUser.id){
+      activePortal='DOCTOR';localStorage.setItem('pesocare_active_portal','DOCTOR');
+      await openDoctorPatient(n.related_user_id);
+      setTimeout(()=>document.getElementById('doctorCarePlanSection')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
+      return;
+    }
+    if(hasRole('PATIENT')){
+      activePortal='PATIENT';activePatientTab='PLAN';
+      localStorage.setItem('pesocare_active_portal','PATIENT');localStorage.setItem('pesocare_patient_tab','PLAN');
+      if(n.related_user_id)localStorage.setItem('bodycare_selected_plan_doctor',n.related_user_id);
+      await loadData();render();
+      setTimeout(()=>document.getElementById('patientCarePlanContent')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
       return;
     }
   }
@@ -1855,6 +1896,18 @@ async function handleRealtimeNotification(n,fromFallback=false){
 
     if(n.type==='RECORD_REMINDER'&&hasRole('PATIENT')&&activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
       await syncPatientReminderPlan(!patientReminderDirty&&!patientReminderSaving);
+    }
+
+    if(NUTRITION_NOTIFICATION_TYPES.includes(n.type)&&hasRole('PATIENT')&&activePortal==='PATIENT'&&activePatientTab==='NUTRITION'){
+      await syncPatientNutrition(true);
+    }
+
+    if(CARE_PLAN_NOTIFICATION_TYPES.includes(n.type)){
+      if(hasRole('PATIENT')&&activePortal==='PATIENT'&&activePatientTab==='PLAN')await syncPatientCarePlan(true);
+      if(hasRole('DOCTOR')&&doctorPatientDetail?.profile?.user_id===n.related_user_id){
+        await syncDoctorCarePlan(n.related_user_id,true);
+        await syncDoctorTimeline(true,true);
+      }
     }
 
     if(n.type==='CLINICAL_ALERT'&&hasRole('DOCTOR')){
@@ -2152,6 +2205,8 @@ async function loadData(){
 
   profile=null;records=[];careLinks=[];linkedDoctorProfiles=[];
   patientPrescriptions=[];patientMessages=[];supportTickets=[];
+  patientCarePlan={goals:[],actions:[]};patientCarePlanDoctorId=null;
+  patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;
   doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];
 
   if(account?.status!=='ACTIVE')return;
@@ -2232,6 +2287,10 @@ function render(){
     result=doctorPatientDetail?doctorPatientDetailView():doctorView();
   }else if(!profile){
     result=initialProfileView();
+  }else if(activePatientTab==='PLAN'){
+    result=patientPlanView();
+  }else if(activePatientTab==='NUTRITION'){
+    result=patientNutritionView();
   }else if(activePatientTab==='DOCTOR'){
     result=patientDoctorView();
   }else if(activePatientTab==='SUPPORT'){
@@ -2355,47 +2414,45 @@ async function createProfile(e){
 function medicalUnreadCount(){
   return notifications.filter(n=>isActionableUnread(n)&&PATIENT_MEDICAL_NOTIFICATION_TYPES.includes(n.type)).length;
 }
-
-function updatePatientSubtabNotificationUI(){
-  const doctorTab=document.querySelector('[data-patient-tab="DOCTOR"]');
-  if(!doctorTab)return;
-
-  const count=medicalUnreadCount();
-  let badge=doctorTab.querySelector('.subtab-badge');
-
-  if(count===0){
-    badge?.remove();
-    return;
-  }
-
+function planUnreadCount(){
+  return notifications.filter(n=>isActionableUnread(n)&&CARE_PLAN_NOTIFICATION_TYPES.includes(n.type)).length;
+}
+function nutritionUnreadCount(){
+  return notifications.filter(n=>isActionableUnread(n)&&NUTRITION_NOTIFICATION_TYPES.includes(n.type)).length;
+}
+function updateSubtabBadge(tabName,count,neutral=false){
+  const tab=document.querySelector(`[data-patient-tab="${tabName}"]`);
+  if(!tab)return;
+  let badge=tab.querySelector('.subtab-badge');
+  if(count===0){badge?.remove();return}
   if(!badge){
     badge=document.createElement('span');
-    badge.className='subtab-badge';
-    doctorTab.append(' ',badge);
+    badge.className=`subtab-badge${neutral?' neutral':''}`;
+    tab.append(' ',badge);
   }
-
   badge.textContent=count>99?'99+':String(count);
 }
-
+function updatePatientSubtabNotificationUI(){
+  updateSubtabBadge('DOCTOR',medicalUnreadCount());
+  updateSubtabBadge('PLAN',planUnreadCount());
+  updateSubtabBadge('NUTRITION',nutritionUnreadCount());
+}
 function patientSubTabsMarkup(){
-  const medicalCount=medicalUnreadCount();
+  const medicalCount=medicalUnreadCount(),planCount=planUnreadCount(),nutritionCount=nutritionUnreadCount();
   const openTickets=(supportTickets||[]).filter(t=>t.status!=='RESOLVED').length;
   return `<nav class="patient-subtabs" aria-label="Secciones del paciente">
     <button type="button" class="patient-subtab ${activePatientTab==='TRACKING'?'active':''}" data-patient-tab="TRACKING">Seguimiento</button>
-    <button type="button" class="patient-subtab ${activePatientTab==='DOCTOR'?'active':''}" data-patient-tab="DOCTOR">
-      Mi médico ${medicalCount?`<span class="subtab-badge">${medicalCount>99?'99+':medicalCount}</span>`:''}
-    </button>
-    <button type="button" class="patient-subtab ${activePatientTab==='SUPPORT'?'active':''}" data-patient-tab="SUPPORT">
-      Soporte ${openTickets?`<span class="subtab-badge neutral">${openTickets}</span>`:''}
-    </button>
+    <button type="button" class="patient-subtab ${activePatientTab==='PLAN'?'active':''}" data-patient-tab="PLAN">Mi plan ${planCount?`<span class="subtab-badge">${planCount>99?'99+':planCount}</span>`:''}</button>
+    <button type="button" class="patient-subtab ${activePatientTab==='NUTRITION'?'active':''}" data-patient-tab="NUTRITION">Nutrición ${nutritionCount?`<span class="subtab-badge">${nutritionCount>99?'99+':nutritionCount}</span>`:''}</button>
+    <button type="button" class="patient-subtab ${activePatientTab==='DOCTOR'?'active':''}" data-patient-tab="DOCTOR">Mi médico ${medicalCount?`<span class="subtab-badge">${medicalCount>99?'99+':medicalCount}</span>`:''}</button>
+    <button type="button" class="patient-subtab ${activePatientTab==='SUPPORT'?'active':''}" data-patient-tab="SUPPORT">Soporte ${openTickets?`<span class="subtab-badge neutral">${openTickets}</span>`:''}</button>
   </nav>`;
 }
-
 function bindPatientSubTabs(){
   document.querySelectorAll('[data-patient-tab]').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const next=btn.dataset.patientTab;
-      if(!['TRACKING','DOCTOR','SUPPORT'].includes(next))return;
+      if(!['TRACKING','PLAN','NUTRITION','DOCTOR','SUPPORT'].includes(next))return;
       activePatientTab=next;
       localStorage.setItem('pesocare_patient_tab',next);
       supportSyncSeq++;
@@ -2403,7 +2460,6 @@ function bindPatientSubTabs(){
     });
   });
 }
-
 function bindLifecycleSync(){
   if(lifecycleSyncBound)return;
   lifecycleSyncBound=true;
@@ -2422,7 +2478,9 @@ function bindLifecycleSync(){
 
 async function syncVisibleContext(){
   try{
-    if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR')await syncPatientMedicalData();
+    if(activePortal==='PATIENT'&&activePatientTab==='PLAN')await syncPatientCarePlan(true);
+    else if(activePortal==='PATIENT'&&activePatientTab==='NUTRITION')await syncPatientNutrition(true);
+    else if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR')await syncPatientMedicalData();
     else if(activePortal==='PATIENT'&&activePatientTab==='SUPPORT')await syncSupportTickets();
     else if(activePortal==='DOCTOR'&&doctorPatientDetail?.profile?.user_id)await syncDoctorMedicalData(doctorPatientDetail.profile.user_id);
     else if(activePortal==='DOCTOR'&&!doctorPatientDetail)await syncDoctorHomeData();
@@ -2433,7 +2491,13 @@ function startContextSync(){
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   bindLifecycleSync();
 
-  if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
+  if(activePortal==='PATIENT'&&activePatientTab==='PLAN'){
+    syncPatientCarePlan(true);
+    contextSyncTimer=setInterval(()=>syncPatientCarePlan(true),6000);
+  }else if(activePortal==='PATIENT'&&activePatientTab==='NUTRITION'){
+    syncPatientNutrition(true);
+    contextSyncTimer=setInterval(()=>syncPatientNutrition(true),12000);
+  }else if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
     syncPatientMedicalData();
     contextSyncTimer=setInterval(()=>syncPatientMedicalData(),3000);
   }else if(activePortal==='PATIENT'&&activePatientTab==='SUPPORT'){
@@ -2502,8 +2566,8 @@ function dashboardView(){
       </div>
       <p id="weightMsg" class="error"></p></form>
     </section>
-    <section class="card"><h2 class="section-title">Peso por semana</h2><div class="muted">Evolución desde Semana 0 hasta Semana ${profile.planned_weeks}</div><div id="chart" class="chart-wrap"></div></section>
-    <section class="card"><h2 class="section-title">Circunferencia abdominal por semana</h2><div class="muted">Evolución en centímetros durante el seguimiento</div><div id="abdomenChart" class="chart-wrap"></div></section>
+    <section class="card"><h2 class="section-title">Evolución de peso</h2><div class="muted">Cada medición se ubica según su fecha exacta dentro de las semanas de seguimiento.</div><div id="chart" class="chart-wrap"></div></section>
+    <section class="card"><h2 class="section-title">Evolución de circunferencia abdominal</h2><div class="muted">La línea incluye todas las mediciones registradas, incluso varias dentro de una misma semana.</div><div id="abdomenChart" class="chart-wrap"></div></section>
     <section class="card">
       <h2 class="section-title">Historial</h2>
       <div class="table-wrap history-table-wrap"><table class="history-table">
@@ -2787,6 +2851,335 @@ function bindPatientReminderPreferences(){
   }
 }
 
+
+function careGoalTypeLabel(type){return ({WEIGHT:'Peso',WAIST:'Circunferencia',RECORDING:'Registro',CUSTOM:'Personalizado'})[type]||'Objetivo'}
+function careGoalStatusLabel(status){return ({ACTIVE:'Activo',ACHIEVED:'Logrado',PAUSED:'Pausado',CANCELLED:'Cancelado'})[status]||status||'Activo'}
+function careActionStatusLabel(status){return ({PENDING:'Pendiente',IN_PROGRESS:'En progreso',COMPLETED:'Completada',CANCELLED:'Cancelada'})[status]||status||'Pendiente'}
+function careGoalTargetText(goal){
+  const parts=[];
+  if(goal.target_value!==null&&goal.target_value!==undefined&&goal.target_value!==''){
+    const n=Number(goal.target_value);
+    parts.push(`${Number.isFinite(n)?n.toLocaleString('es-CL',{maximumFractionDigits:2}):goal.target_value}${goal.target_unit?` ${goal.target_unit}`:''}`);
+  }
+  if(goal.target_date)parts.push(`hasta ${fmt(goal.target_date)}`);
+  return parts.join(' · ')||'Sin valor/meta temporal específica';
+}
+function carePlanCounts(plan){
+  const goals=plan?.goals||[],actions=plan?.actions||[];
+  return {
+    activeGoals:goals.filter(g=>g.status==='ACTIVE').length,
+    achievedGoals:goals.filter(g=>g.status==='ACHIEVED').length,
+    pendingActions:actions.filter(a=>['PENDING','IN_PROGRESS'].includes(a.status)).length,
+    completedActions:actions.filter(a=>a.status==='COMPLETED').length
+  };
+}
+function carePlanProgress(plan){
+  const relevant=(plan?.actions||[]).filter(a=>a.status!=='CANCELLED');
+  return relevant.length?Math.round(relevant.filter(a=>a.status==='COMPLETED').length/relevant.length*100):0;
+}
+function currentMetricForGoal(goal){
+  if(goal.goal_type==='WEIGHT'){const last=(records||[]).at(-1);return last?kg(last.weight_kg):null}
+  if(goal.goal_type==='WAIST'){const last=[...(records||[])].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined);return last?cm(last.abdominal_circumference_cm):null}
+  return null;
+}
+function selectedPatientPlanDoctorId(){
+  const select=document.getElementById('patientPlanDoctorSelect');
+  if(select?.value)return select.value;
+  const stored=localStorage.getItem('bodycare_selected_plan_doctor');
+  if(stored&&linkedDoctorProfiles.some(d=>d.user_id===stored))return stored;
+  return linkedDoctorProfiles[0]?.user_id||null;
+}
+function patientCareGoalMarkup(goal){
+  const current=currentMetricForGoal(goal);
+  return `<article class="care-goal-card ${String(goal.status||'ACTIVE').toLowerCase()}">
+    <div class="care-card-head"><div><span class="care-type-chip">${careGoalTypeLabel(goal.goal_type)}</span><strong>${esc(goal.title)}</strong></div><span class="care-status-chip ${String(goal.status||'ACTIVE').toLowerCase()}">${careGoalStatusLabel(goal.status)}</span></div>
+    ${goal.description?`<p>${esc(goal.description)}</p>`:''}
+    <div class="care-goal-meta"><span><b>Objetivo:</b> ${esc(careGoalTargetText(goal))}</span>${current?`<span><b>Dato actual:</b> ${esc(current)}</span>`:''}</div>
+  </article>`;
+}
+function patientCareActionMarkup(action){
+  const locked=['COMPLETED','CANCELLED'].includes(action.status);
+  return `<article class="care-action-card ${String(action.status||'PENDING').toLowerCase()}">
+    <div class="care-card-head"><div><strong>${esc(action.title)}</strong>${action.due_date?`<span class="care-due-date">Fecha objetivo ${fmt(action.due_date)}</span>`:''}</div><span class="care-status-chip ${String(action.status||'PENDING').toLowerCase()}">${careActionStatusLabel(action.status)}</span></div>
+    ${action.description?`<p>${esc(action.description)}</p>`:''}
+    ${action.patient_note?`<div class="care-patient-note"><b>Mi nota:</b> ${esc(action.patient_note)}</div>`:''}
+    ${!locked?`<label class="care-note-label">Nota de avance <span class="muted">(opcional)</span></label>
+      <textarea rows="2" maxlength="1000" data-care-action-note="${action.id}" placeholder="Puedes dejar una nota para tu médico...">${esc(action.patient_note||'')}</textarea>
+      <div class="care-action-buttons">${action.status==='PENDING'?`<button type="button" class="secondary small-btn" data-patient-care-action="${action.id}" data-care-status="IN_PROGRESS">Iniciar</button>`:''}<button type="button" class="primary small-btn" data-patient-care-action="${action.id}" data-care-status="COMPLETED">Marcar completada</button></div>`:''}
+  </article>`;
+}
+function patientCarePlanContentMarkup(){
+  const plan=patientCarePlan||{goals:[],actions:[]},counts=carePlanCounts(plan),progress=carePlanProgress(plan);
+  return `<div class="care-plan-summary">
+    <div><span>Objetivos activos</span><strong>${counts.activeGoals}</strong></div><div><span>Objetivos logrados</span><strong>${counts.achievedGoals}</strong></div><div><span>Acciones pendientes</span><strong>${counts.pendingActions}</strong></div><div><span>Acciones completadas</span><strong>${counts.completedActions}</strong></div>
+  </div>
+  <div class="care-progress-card"><div><strong>Avance de acciones</strong><span>${progress}% completado</span></div><div class="care-progress-track"><i style="width:${progress}%"></i></div></div>
+  <section class="care-plan-block"><div class="care-block-head"><h3>Mis objetivos</h3><span>${(plan.goals||[]).length}</span></div><div class="care-goal-list">${(plan.goals||[]).length?(plan.goals||[]).map(patientCareGoalMarkup).join(''):'<div class="empty-state">Tu médico aún no ha definido objetivos compartidos.</div>'}</div></section>
+  <section class="care-plan-block"><div class="care-block-head"><h3>Acciones e hitos</h3><span>${(plan.actions||[]).length}</span></div><div class="care-action-list">${(plan.actions||[]).length?(plan.actions||[]).map(patientCareActionMarkup).join(''):'<div class="empty-state">No tienes acciones asignadas por ahora.</div>'}</div></section>`;
+}
+function renderPatientCarePlanContent(){
+  const el=document.getElementById('patientCarePlanContent');if(!el)return;
+  el.innerHTML=patientCarePlanContentMarkup();bindPatientCarePlanActions();
+  const st=document.getElementById('patientCarePlanStatus');if(st){st.textContent='Actualizado';st.classList.remove('syncing')}
+}
+function markVisiblePlanNotifications(doctorId){
+  if(!doctorId)return;
+  notifications.filter(n=>isActionableUnread(n)&&CARE_PLAN_NOTIFICATION_TYPES.includes(n.type)&&n.related_user_id===doctorId).forEach(n=>markNotificationRead(n.id));
+  updateHeaderNotificationUI();
+}
+async function syncPatientCarePlan(renderUI=true){
+  if(!hasRole('PATIENT'))return;
+  const doctorId=selectedPatientPlanDoctorId();
+  if(!doctorId){patientCarePlan={goals:[],actions:[]};patientCarePlanDoctorId=null;if(renderUI)renderPatientCarePlanContent();return}
+  if(patientCarePlanSyncing)return;
+  patientCarePlanSyncing=true;
+  const st=document.getElementById('patientCarePlanStatus');if(st){st.textContent='Actualizando…';st.classList.add('syncing')}
+  try{
+    const data=await dbRpc('bodycare_get_care_plan',{p_doctor_user_id:doctorId,p_patient_user_id:currentUser.id});
+    if(selectedPatientPlanDoctorId()===doctorId){
+      patientCarePlan=data||{goals:[],actions:[]};patientCarePlanDoctorId=doctorId;markVisiblePlanNotifications(doctorId);
+      if(renderUI&&!userIsTyping())renderPatientCarePlanContent();
+    }
+  }catch(err){console.warn('Patient care plan sync failed',err);if(st){st.textContent='No se pudo actualizar';st.classList.remove('syncing')}}
+  finally{patientCarePlanSyncing=false}
+}
+async function updatePatientCareAction(actionId,status){
+  const note=document.querySelector(`[data-care-action-note="${actionId}"]`)?.value.trim()||null;
+  try{
+    await dbRpc('bodycare_set_care_action_status',{p_action_id:actionId,p_status:status,p_patient_note:note});
+    await syncPatientCarePlan(false);renderPatientCarePlanContent();
+    showToast(status==='COMPLETED'?'Acción completada':'Avance actualizado','Tu médico verá el cambio en BodyCare.','CARE_ACTION_UPDATED');
+  }catch(err){alert('No fue posible actualizar la acción: '+err.message)}
+}
+function bindPatientCarePlanActions(){
+  document.querySelectorAll('[data-patient-care-action]').forEach(btn=>btn.addEventListener('click',()=>updatePatientCareAction(btn.dataset.patientCareAction,btn.dataset.careStatus)));
+}
+
+const NUTRITION_MEALS=[
+  {type:'BREAKFAST',label:'Desayuno',time:'08:00'},
+  {type:'SNACK_AM',label:'Snack AM',time:'10:30'},
+  {type:'LUNCH',label:'Almuerzo',time:'14:00'},
+  {type:'SNACK_PM',label:'Snack PM',time:'17:00'},
+  {type:'DINNER',label:'Cena',time:'20:00'}
+];
+function nutritionMeal(type){return NUTRITION_MEALS.find(m=>m.type===type)||{type,label:type,time:''}}
+function nutritionNum(v,d=1){
+  const n=Number(v||0);return Number.isFinite(n)?n.toLocaleString('es-CL',{minimumFractionDigits:d,maximumFractionDigits:d}):'0';
+}
+function selectedPatientNutritionDoctorId(){
+  const select=document.getElementById('patientNutritionDoctorSelect');
+  if(select?.value)return select.value;
+  const stored=localStorage.getItem('bodycare_selected_nutrition_doctor');
+  if(stored&&linkedDoctorProfiles.some(d=>d.user_id===stored))return stored;
+  return linkedDoctorProfiles[0]?.user_id||null;
+}
+function nutritionFoodById(id,catalog=patientNutritionCatalog){return (catalog||[]).find(f=>f.id===id)||null}
+function nutritionItemsForMeal(type,plan=patientNutritionPlan){
+  return (plan?.items||[]).filter(i=>i.meal_type===type);
+}
+function nutritionSuggestedGrams(type,foodId){
+  const planned=nutritionItemsForMeal(type).find(i=>i.food_id===foodId);
+  const food=nutritionFoodById(foodId);
+  return Number(planned?.portion_grams||food?.reference_serving_grams||100);
+}
+function nutritionEstimate(food,grams){
+  const g=Math.max(0,Number(grams)||0),factor=g/100;
+  return {
+    kcal:Number(food?.kcal_per_100g||0)*factor,
+    protein_g:Number(food?.protein_g_per_100g||0)*factor,
+    sugars_g:Number(food?.sugars_g_per_100g||0)*factor,
+    fat_g:Number(food?.fat_g_per_100g||0)*factor
+  };
+}
+function nutritionTargetCard(key,label,unit){
+  const target=Number(patientNutritionDay?.targets?.[key]||0);
+  const consumed=Number(patientNutritionDay?.totals?.[key]||0);
+  const pct=target>0?consumed/target*100:0;
+  const over=target>0&&pct>100;
+  const protein=key==='protein_g';
+  const status=!target?'Meta no definida':protein&&pct>=100?'Meta alcanzada':over?`${nutritionNum(consumed-target,1)} ${unit} sobre pauta`:`${nutritionNum(Math.max(target-consumed,0),1)} ${unit} disponibles`;
+  return `<div class="nutrition-target-card ${over&&!protein?'over':''} ${protein&&pct>=100?'reached':''}">
+    <span>${label}</span>
+    <strong>${nutritionNum(consumed,key==='kcal'?0:1)} <small>/ ${target?nutritionNum(target,key==='kcal'?0:1):'—'} ${unit}</small></strong>
+    <div class="nutrition-progress"><i style="width:${Math.min(100,Math.max(0,pct))}%"></i></div>
+    <em>${esc(status)}</em>
+  </div>`;
+}
+function nutritionPlanSourceNotice(){
+  return `<div class="nutrition-reference-note">
+    <strong>Referencia nutricional</strong>
+    <span>Los valores genéricos se calculan por 100 g y se ajustan a los gramos registrados. Productos “light”, marcas locales y preparaciones caseras deben confirmarse con su etiqueta o receta cuando se requiera mayor precisión.</span>
+  </div>`;
+}
+function patientNutritionFoodOptions(type){
+  const planIds=new Set(nutritionItemsForMeal(type).map(i=>i.food_id));
+  const planned=patientNutritionCatalog.filter(f=>planIds.has(f.id));
+  const others=patientNutritionCatalog.filter(f=>!planIds.has(f.id));
+  const option=f=>`<option value="${f.id}">${esc(f.name)} · ${nutritionNum(f.kcal_per_100g,0)} kcal/100g</option>`;
+  return `${planned.length?`<optgroup label="Alimentos de tu pauta">${planned.map(option).join('')}</optgroup>`:''}<optgroup label="Otros alimentos del catálogo">${others.map(option).join('')}</optgroup>`;
+}
+function patientNutritionLoggedMeal(type){
+  const rows=(patientNutritionDay?.items||[]).filter(i=>i.meal_type===type);
+  if(!rows.length)return '<div class="nutrition-meal-empty">Aún no registras alimentos en esta comida.</div>';
+  return `<div class="nutrition-log-list">${rows.map(i=>`<div class="nutrition-log-row">
+    <div><strong>${esc(i.food_name_snapshot)}</strong><span>${nutritionNum(i.grams,0)} g · ${nutritionNum(i.kcal,0)} kcal · P ${nutritionNum(i.protein_g,1)} g · Az ${nutritionNum(i.sugars_g,1)} g · G ${nutritionNum(i.fat_g,1)} g</span>${i.note?`<small>${esc(i.note)}</small>`:''}</div>
+    <button type="button" class="nutrition-delete-btn" data-delete-nutrition-log="${i.id}" aria-label="Eliminar">×</button>
+  </div>`).join('')}</div>`;
+}
+function patientNutritionPlanHint(type){
+  const items=nutritionItemsForMeal(type);
+  if(!items.length)return '';
+  const groups=new Map();
+  items.forEach(i=>{
+    const key=i.option_group||'PAUTA';
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(i);
+  });
+  return `<details class="nutrition-plan-hint"><summary>Ver alimentos sugeridos por la pauta</summary>
+    ${[...groups.entries()].map(([group,rows])=>`<div class="nutrition-option-group"><b>${esc(group.replaceAll('_',' '))}</b>${rows.map(i=>`<span>${esc(i.source_text||i.name)} · ${nutritionNum(i.portion_grams,0)} g</span>`).join('')}</div>`).join('')}
+  </details>`;
+}
+function patientNutritionMealCard(type){
+  const m=nutritionMeal(type);
+  return `<section class="nutrition-meal-card">
+    <div class="nutrition-meal-head"><div><strong>${m.label}</strong><span>${m.time}</span></div></div>
+    ${patientNutritionPlanHint(type)}
+    ${patientNutritionLoggedMeal(type)}
+    <form class="nutrition-log-form" data-nutrition-meal-form="${type}">
+      <div class="nutrition-log-grid">
+        <div><label>Alimento</label><select data-nutrition-food required>${patientNutritionFoodOptions(type)}</select></div>
+        <div><label>Cantidad</label><div class="suffix-input"><input data-nutrition-grams type="number" min="1" max="5000" step="1" required><span>g</span></div></div>
+      </div>
+      <div class="nutrition-estimate" data-nutrition-estimate>Selecciona el alimento y la cantidad para ver el cálculo.</div>
+      <input data-nutrition-note maxlength="300" placeholder="Nota opcional: preparación, marca, etc.">
+      <button class="secondary small-btn" type="submit">Agregar a ${m.label.toLowerCase()}</button>
+    </form>
+  </section>`;
+}
+function patientNutritionContentMarkup(){
+  const p=patientNutritionPlan?.plan;
+  if(!p)return `<div class="empty-state">Tu profesional aún no ha activado una pauta nutricional en BodyCare.</div>`;
+  return `<section class="card">
+    <div class="card-head"><div><h2 class="section-title">${esc(p.program_name||'Plan nutricional')}</h2><div class="muted">Registro diario comparado con la pauta definida por tu profesional.</div></div><span class="nutrition-program-chip">Activo</span></div>
+    ${p.instructions?`<div class="nutrition-instructions">${esc(p.instructions)}</div>`:''}
+    <div class="nutrition-guidance-grid">
+      <div><b>Evitar según pauta</b><span>${esc(p.avoid_text||'—')}</span></div>
+      <div><b>Consumo libre según pauta</b><span>${esc(p.free_text||'—')}</span></div>
+    </div>
+    ${nutritionPlanSourceNotice()}
+  </section>
+  <section class="nutrition-targets">
+    ${nutritionTargetCard('kcal','Calorías','kcal')}
+    ${nutritionTargetCard('protein_g','Proteína','g')}
+    ${nutritionTargetCard('sugars_g','Azúcares totales','g')}
+    ${nutritionTargetCard('fat_g','Grasa total','g')}
+  </section>
+  <section class="card nutrition-date-card">
+    <div><label for="patientNutritionDate">Día del registro</label><input id="patientNutritionDate" type="text" inputmode="numeric" maxlength="10" data-date-cl value="${formatDateCL(patientNutritionDate)}"></div>
+    <button type="button" id="nutritionTodayBtn" class="secondary small-btn">Hoy</button>
+  </section>
+  <div class="nutrition-meal-stack">${NUTRITION_MEALS.map(m=>patientNutritionMealCard(m.type)).join('')}</div>`;
+}
+function renderPatientNutritionContent(){
+  const el=document.getElementById('patientNutritionContent');if(!el)return;
+  el.innerHTML=patientNutritionContentMarkup();
+  bindPatientNutritionContent();
+  bindDateCLInputs(el);
+}
+function markVisibleNutritionNotifications(doctorId){
+  notifications.filter(n=>isActionableUnread(n)&&NUTRITION_NOTIFICATION_TYPES.includes(n.type)&&(!doctorId||n.related_user_id===doctorId)).forEach(n=>markNotificationRead(n.id));
+  updateHeaderNotificationUI();
+}
+async function syncPatientNutrition(renderUI=true){
+  if(!hasRole('PATIENT'))return;
+  const doctorId=selectedPatientNutritionDoctorId();
+  if(!doctorId)return;
+  if(patientNutritionSyncing)return;
+  patientNutritionSyncing=true;
+  try{
+    const [plan,catalog]=await Promise.all([
+      dbRpc('bodycare_get_nutrition_plan',{p_doctor_user_id:doctorId,p_patient_user_id:currentUser.id}),
+      dbRpc('bodycare_get_nutrition_catalog',{p_doctor_user_id:doctorId})
+    ]);
+    patientNutritionPlan=plan||{plan:null,items:[]};
+    patientNutritionCatalog=catalog||[];
+    patientNutritionDoctorId=doctorId;
+    if(patientNutritionPlan?.plan?.id){
+      patientNutritionDay=await dbRpc('bodycare_get_nutrition_day',{p_doctor_user_id:doctorId,p_plan_id:patientNutritionPlan.plan.id,p_log_date:patientNutritionDate});
+    }else patientNutritionDay=null;
+    markVisibleNutritionNotifications(doctorId);
+    if(renderUI&&!userIsTyping())renderPatientNutritionContent();
+  }catch(err){console.warn('Nutrition sync failed',err)}
+  finally{patientNutritionSyncing=false}
+}
+function updateNutritionEstimate(form){
+  const foodId=form.querySelector('[data-nutrition-food]')?.value;
+  const food=nutritionFoodById(foodId);
+  const grams=Number(form.querySelector('[data-nutrition-grams]')?.value||0);
+  const el=form.querySelector('[data-nutrition-estimate]');
+  if(!food||!el)return;
+  const n=nutritionEstimate(food,grams);
+  el.innerHTML=`<strong>${nutritionNum(n.kcal,0)} kcal</strong> · proteína ${nutritionNum(n.protein_g,1)} g · azúcares ${nutritionNum(n.sugars_g,1)} g · grasa ${nutritionNum(n.fat_g,1)} g <small>${food.reference_quality==='VERIFY_LABEL'?'Referencia genérica: confirmar etiqueta cuando sea posible.':esc(food.source_name||'Referencia')}</small>`;
+}
+function bindNutritionMealForm(form){
+  const type=form.dataset.nutritionMealForm;
+  const select=form.querySelector('[data-nutrition-food]');
+  const grams=form.querySelector('[data-nutrition-grams]');
+  const refresh=()=>{
+    if(select?.value&&(!grams.value||Number(grams.value)<=0))grams.value=String(Math.round(nutritionSuggestedGrams(type,select.value)));
+    updateNutritionEstimate(form);
+  };
+  select?.addEventListener('change',()=>{grams.value=String(Math.round(nutritionSuggestedGrams(type,select.value)));updateNutritionEstimate(form)});
+  grams?.addEventListener('input',()=>updateNutritionEstimate(form));
+  if(select?.options?.length){select.selectedIndex=0;refresh()}
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const foodId=select?.value,g=Number(grams?.value||0),note=form.querySelector('[data-nutrition-note]')?.value.trim()||null;
+    if(!foodId||!g)return;
+    try{
+      await dbRpc('bodycare_log_nutrition_item',{p_doctor_user_id:patientNutritionDoctorId,p_plan_id:patientNutritionPlan.plan.id,p_log_date:patientNutritionDate,p_meal_type:type,p_food_id:foodId,p_grams:g,p_note:note});
+      await syncPatientNutrition(false);renderPatientNutritionContent();
+      showToast('Comida registrada','Los totales diarios fueron actualizados.','NUTRITION_PLAN_UPDATED');
+    }catch(err){alert('No fue posible registrar el alimento: '+err.message)}
+  });
+}
+function bindPatientNutritionContent(){
+  document.querySelectorAll('[data-nutrition-meal-form]').forEach(bindNutritionMealForm);
+  document.querySelectorAll('[data-delete-nutrition-log]').forEach(btn=>btn.addEventListener('click',async()=>{
+    if(!confirm('¿Eliminar este alimento del registro diario?'))return;
+    try{await dbRpc('bodycare_delete_nutrition_log_item',{p_log_item_id:btn.dataset.deleteNutritionLog});await syncPatientNutrition(false);renderPatientNutritionContent()}
+    catch(err){alert('No fue posible eliminar el registro: '+err.message)}
+  }));
+  document.getElementById('patientNutritionDate')?.addEventListener('change',async e=>{
+    const iso=parseDateCLInput(e.target.value);
+    if(!iso){alert('Fecha inválida. Usa DD/MM/AAAA.');e.target.value=formatDateCL(patientNutritionDate);return}
+    if(iso>today()){alert('No puedes registrar comidas en una fecha futura.');e.target.value=formatDateCL(patientNutritionDate);return}
+    patientNutritionDate=iso;await syncPatientNutrition(false);renderPatientNutritionContent();
+  });
+  document.getElementById('nutritionTodayBtn')?.addEventListener('click',async()=>{patientNutritionDate=today();await syncPatientNutrition(false);renderPatientNutritionContent()});
+}
+function patientNutritionView(){
+  const selected=selectedPatientNutritionDoctorId();
+  app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
+    <section class="card patient-section-hero"><div><h2 class="section-title">Nutrición</h2><div class="muted">Registra tus cinco comidas y revisa cuánto llevas consumido frente a tu pauta diaria.</div></div><span class="realtime-pill"><i class="live-dot online"></i>Cálculo automático</span></section>
+    ${linkedDoctorProfiles.length?`<section class="card nutrition-doctor-selector"><label for="patientNutritionDoctorSelect">Pauta indicada por</label><select id="patientNutritionDoctorSelect">${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}" ${d.user_id===selected?'selected':''}>${esc(d.display_name||'Médico')}</option>`).join('')}</select></section><div id="patientNutritionContent"><div class="empty-state">Cargando pauta nutricional…</div></div>`:`<section class="card"><div class="empty-state">Vincula un profesional para habilitar Nutrición.</div></section>`}`);
+  bindCommonHeader();bindPatientSubTabs();
+  document.getElementById('patientNutritionDoctorSelect')?.addEventListener('change',async e=>{localStorage.setItem('bodycare_selected_nutrition_doctor',e.target.value);patientNutritionDoctorId=null;await syncPatientNutrition(true)});
+  setTimeout(()=>syncPatientNutrition(true),0);
+}
+
+function patientPlanView(){
+  const selected=selectedPatientPlanDoctorId();
+  if(patientCarePlanDoctorId!==selected)patientCarePlan={goals:[],actions:[]};
+  app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
+    <section class="card patient-section-hero"><div><h2 class="section-title">Mi plan</h2><div class="muted">Objetivos y acciones compartidas con tu equipo tratante.</div></div><span id="patientCarePlanStatus" class="agenda-sync-status">Actualizando…</span></section>
+    ${linkedDoctorProfiles.length?`<section class="card"><label for="patientPlanDoctorSelect">Plan definido por</label><select id="patientPlanDoctorSelect">${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}" ${d.user_id===selected?'selected':''}>${esc(d.display_name||'Médico')}</option>`).join('')}</select><div class="clinical-settings-note">Este plan refleja objetivos y acciones definidos o compartidos con tu profesional. BodyCare no genera recomendaciones clínicas automáticas.</div></section>
+      <section class="card" id="patientCarePlanContent">${patientCarePlanDoctorId===selected?patientCarePlanContentMarkup():'<div class="empty-state">Cargando tu plan de seguimiento…</div>'}</section>`:`<section class="card"><div class="empty-state">Vincula un médico para habilitar un plan de seguimiento compartido.</div></section>`}`);
+  bindCommonHeader();bindPatientSubTabs();bindPatientCarePlanActions();
+  document.getElementById('patientPlanDoctorSelect')?.addEventListener('change',e=>{localStorage.setItem('bodycare_selected_plan_doctor',e.target.value);patientCarePlanDoctorId=null;patientCarePlan={goals:[],actions:[]};syncPatientCarePlan(true)});
+  setTimeout(()=>syncPatientCarePlan(true),0);
+}
+
 function patientDoctorView(){
   const selectedStored=localStorage.getItem('pesocare_selected_doctor');
   const selectedDoctor=linkedDoctorProfiles.some(d=>d.user_id===selectedStored)?selectedStored:(linkedDoctorProfiles[0]?.user_id||'');
@@ -2926,16 +3319,31 @@ function patientSupportView(){
 }
 
 
-function getWeeklyLatest(sorted, field){
-  const weekly=new Map();
-  sorted.forEach(r=>{
-    const w=weekOf(r.measured_on);
-    const raw=r[field];
-    if(w<=profile.planned_weeks && raw!==null && raw!==undefined && raw!==''){
-      weekly.set(w,Number(raw));
-    }
-  });
-  return [...weekly.entries()].sort((a,b)=>a[0]-b[0]);
+function measurementWeekPosition(date,startDate){
+  const start=parseDate(startDate);
+  const current=parseDate(date);
+  return Math.max(0,(current-start)/(7*86400000));
+}
+
+function measurementWeekLabel(position){
+  const whole=Math.floor(position);
+  const days=Math.round((position-whole)*7);
+  return days>0?`Semana ${whole} + ${days} día${days===1?'':'s'}`:`Semana ${whole}`;
+}
+
+function getMeasurementPoints(sorted,field,p=profile){
+  return (sorted||[])
+    .filter(r=>{
+      const raw=r[field];
+      return raw!==null&&raw!==undefined&&raw!=='';
+    })
+    .map(r=>[
+      measurementWeekPosition(r.measured_on,p.start_date),
+      Number(r[field]),
+      r.measured_on,
+      weekOfFor(r.measured_on,p)
+    ])
+    .sort((a,b)=>a[0]-b[0]);
 }
 
 function buildChartSvg(points, options={}){
@@ -2949,7 +3357,8 @@ function buildChartSvg(points, options={}){
     lineClass='chart-line',
     pointClass='chart-point',
     goalClass='chart-goal',
-    ariaLabel='Gráfico'
+    ariaLabel='Gráfico',
+    plan=profile
   }=options;
 
   const vals=points.map(p=>p[1]).concat(goal!==null?[Number(goal)]:[]);
@@ -2962,8 +3371,11 @@ function buildChartSvg(points, options={}){
     min-=pad; max+=pad;
   }
 
+  const pointMax=Math.max(0,...points.map(p=>Number(p[0])||0));
+  const xMax=Math.max(1,Number(plan?.planned_weeks||0),Math.ceil(pointMax));
+
   const W=760,H=330,L=58,R=18,T=20,B=50,iw=W-L-R,ih=H-T-B;
-  const x=w=>L+(w/Math.max(1,profile.planned_weeks))*iw;
+  const x=position=>L+(position/xMax)*iw;
   const y=v=>T+((max-v)/(max-min))*ih;
 
   let svg=`<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(ariaLabel)}">`;
@@ -2976,28 +3388,30 @@ function buildChartSvg(points, options={}){
     svg+=`<text class="chart-label" x="${L-8}" y="${yy+4}" text-anchor="end">${v.toFixed(decimals)}</text>`;
   }
 
-  const step=profile.planned_weeks<=16?2:profile.planned_weeks<=32?4:Math.ceil(profile.planned_weeks/8);
-  for(let w=0;w<=profile.planned_weeks;w+=step){
+  const step=xMax<=16?2:xMax<=32?4:Math.max(1,Math.ceil(xMax/8));
+  for(let w=0;w<=xMax;w+=step){
     const xx=x(w);
     svg+=`<line class="chart-grid" x1="${xx}" y1="${T}" x2="${xx}" y2="${T+ih}"/>`;
     svg+=`<text class="chart-label" x="${xx}" y="${H-22}" text-anchor="middle">${w}</text>`;
   }
-  if(profile.planned_weeks%step!==0){
-    svg+=`<text class="chart-label" x="${x(profile.planned_weeks)}" y="${H-22}" text-anchor="middle">${profile.planned_weeks}</text>`;
+  if(xMax%step!==0){
+    svg+=`<text class="chart-label" x="${x(xMax)}" y="${H-22}" text-anchor="middle">${xMax}</text>`;
   }
 
   if(goal!==null){
     svg+=`<line class="${goalClass}" x1="${L}" y1="${y(Number(goal))}" x2="${W-R}" y2="${y(Number(goal))}"/>`;
   }
 
-  const path=points.map(([w,v],i)=>`${i?'L':'M'} ${x(w).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  const path=points.map(([position,value],i)=>`${i?'L':'M'} ${x(position).toFixed(1)} ${y(value).toFixed(1)}`).join(' ');
   svg+=`<path class="${lineClass}" d="${path}"/>`;
 
-  points.forEach(([w,v])=>{
-    svg+=`<circle class="${pointClass}" cx="${x(w)}" cy="${y(v)}" r="5"><title>Semana ${w}: ${v.toFixed(decimals)} ${valueSuffix}</title></circle>`;
+  points.forEach(([position,value,date])=>{
+    const dateLabel=date?fmt(date):'';
+    const weekLabel=measurementWeekLabel(position);
+    svg+=`<circle class="${pointClass}" cx="${x(position)}" cy="${y(value)}" r="5"><title>${dateLabel} · ${weekLabel}: ${value.toFixed(decimals)} ${valueSuffix}</title></circle>`;
   });
 
-  svg+=`<text class="chart-label" x="${L+iw/2}" y="${H-4}" text-anchor="middle">Semanas</text>`;
+  svg+=`<text class="chart-label" x="${L+iw/2}" y="${H-4}" text-anchor="middle">Semanas de seguimiento</text>`;
   svg+=`<text class="chart-label" transform="translate(14 ${T+ih/2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text>`;
   svg+='</svg>';
 
@@ -3005,8 +3419,8 @@ function buildChartSvg(points, options={}){
 }
 
 function drawCharts(sorted){
-  const weightPoints=getWeeklyLatest(sorted,'weight_kg');
-  const abdomenPoints=getWeeklyLatest(sorted,'abdominal_circumference_cm');
+  const weightPoints=getMeasurementPoints(sorted,'weight_kg',profile);
+  const abdomenPoints=getMeasurementPoints(sorted,'abdominal_circumference_cm',profile);
 
   const weightEl=document.getElementById('chart');
   if(weightEl){
@@ -3016,7 +3430,8 @@ function drawCharts(sorted){
         yLabel:'Peso (kg)',
         valueSuffix:'kg',
         decimals:2,
-        ariaLabel:'Gráfico de evolución de peso'
+        ariaLabel:'Gráfico de evolución de peso',
+        plan:profile
       })+
       `<div class="legend"><span><i class="legend-dot"></i>Peso</span>${profile.target_weight_kg?'<span><i class="legend-goal"></i>Meta</span>':''}</div>`;
   }
@@ -3030,7 +3445,8 @@ function drawCharts(sorted){
         decimals:2,
         lineClass:'chart-line-abdomen',
         pointClass:'chart-point-abdomen',
-        ariaLabel:'Gráfico de evolución de circunferencia abdominal'
+        ariaLabel:'Gráfico de evolución de circunferencia abdominal',
+        plan:profile
       })+
       `<div class="legend"><span><i class="legend-dot abdomen"></i>Circunferencia abdominal</span></div>`;
   }
@@ -3043,15 +3459,16 @@ function buildPrintableReport(sorted){
   const initialAbdomen=profile.initial_abdominal_circumference_cm!==null&&profile.initial_abdominal_circumference_cm!==undefined
     ?Number(profile.initial_abdominal_circumference_cm):null;
 
-  const weightPoints=getWeeklyLatest(sorted,'weight_kg');
-  const abdomenPoints=getWeeklyLatest(sorted,'abdominal_circumference_cm');
+  const weightPoints=getMeasurementPoints(sorted,'weight_kg',profile);
+  const abdomenPoints=getMeasurementPoints(sorted,'abdominal_circumference_cm',profile);
 
   const weightSvg=buildChartSvg(weightPoints,{
     goal:profile.target_weight_kg?Number(profile.target_weight_kg):null,
     yLabel:'Peso (kg)',
     valueSuffix:'kg',
     decimals:2,
-    ariaLabel:'Evolución de peso'
+    ariaLabel:'Evolución de peso',
+    plan:profile
   });
 
   const abdomenSvg=buildChartSvg(abdomenPoints,{
@@ -3060,7 +3477,8 @@ function buildPrintableReport(sorted){
     decimals:2,
     lineClass:'chart-line-abdomen',
     pointClass:'chart-point-abdomen',
-    ariaLabel:'Evolución de circunferencia abdominal'
+    ariaLabel:'Evolución de circunferencia abdominal',
+    plan:profile
   });
 
   const generatedAt=new Date().toLocaleString('es-CL');
@@ -3946,7 +4364,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v21.2'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v23.1'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -4221,7 +4639,7 @@ async function syncDoctorPrescriptions(patientId){
 }
 
 async function syncDoctorMedicalData(patientId){
-  await Promise.allSettled([syncDoctorMessages(patientId),syncDoctorPrescriptions(patientId),syncDoctorControls(patientId)]);
+  await Promise.allSettled([syncDoctorMessages(patientId),syncDoctorPrescriptions(patientId),syncDoctorControls(patientId),syncDoctorCarePlan(patientId,true),syncDoctorNutrition(patientId,true)]);
   await syncDoctorTimeline(true,false);
 
   if(doctorPatientDetail?.profile?.user_id===patientId){
@@ -5114,42 +5532,63 @@ function doctorView(){
 function weekOfFor(date,p){return Math.max(0,Math.floor((parseDate(date)-parseDate(p.start_date))/(7*86400000)))}
 
 function buildStandaloneChart(rows,p,field,goal=null,yLabel='',suffix=''){
-  const weekly=new Map();
-  rows.forEach(r=>{
-    const raw=r[field];if(raw===null||raw===undefined||raw==='')return;
-    const w=weekOfFor(r.measured_on,p);if(w<=p.planned_weeks)weekly.set(w,Number(raw));
-  });
-  const points=[...weekly.entries()].sort((a,b)=>a[0]-b[0]);
+  const points=getMeasurementPoints(rows,field,p);
   if(!points.length)return '<div class="empty-state">Sin datos suficientes.</div>';
+
   const vals=points.map(x=>x[1]).concat(goal!==null?[Number(goal)]:[]);
   let min=Math.min(...vals),max=Math.max(...vals);
   if(max-min<4){min-=2;max+=2}else{const pad=(max-min)*.15;min-=pad;max+=pad}
+
+  const pointMax=Math.max(0,...points.map(x=>Number(x[0])||0));
+  const xMax=Math.max(1,Number(p.planned_weeks||0),Math.ceil(pointMax));
+
   const W=760,H=300,L=58,R=18,T=18,B=45,iw=W-L-R,ih=H-T-B;
-  const x=w=>L+(w/Math.max(1,p.planned_weeks))*iw;
+  const x=position=>L+(position/xMax)*iw;
   const y=v=>T+((max-v)/(max-min))*ih;
+
   let svg=`<svg class="chart-svg" viewBox="0 0 ${W} ${H}">`;
-  for(let i=0;i<=5;i++){const v=max-(max-min)*i/5,yy=T+ih*i/5;svg+=`<line class="chart-grid" x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}"/><text class="chart-label" x="${L-8}" y="${yy+4}" text-anchor="end">${v.toFixed(1)}</text>`}
+
+  for(let i=0;i<=5;i++){
+    const v=max-(max-min)*i/5,yy=T+ih*i/5;
+    svg+=`<line class="chart-grid" x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}"/><text class="chart-label" x="${L-8}" y="${yy+4}" text-anchor="end">${v.toFixed(1)}</text>`;
+  }
+
+  const step=xMax<=16?2:xMax<=32?4:Math.max(1,Math.ceil(xMax/8));
+  for(let w=0;w<=xMax;w+=step){
+    const xx=x(w);
+    svg+=`<line class="chart-grid" x1="${xx}" y1="${T}" x2="${xx}" y2="${T+ih}"/><text class="chart-label" x="${xx}" y="${H-22}" text-anchor="middle">${w}</text>`;
+  }
+  if(xMax%step!==0){
+    svg+=`<text class="chart-label" x="${x(xMax)}" y="${H-22}" text-anchor="middle">${xMax}</text>`;
+  }
+
   if(goal!==null)svg+=`<line class="chart-goal" x1="${L}" y1="${y(Number(goal))}" x2="${W-R}" y2="${y(Number(goal))}"/>`;
-  const path=points.map(([w,v],i)=>`${i?'L':'M'} ${x(w).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+
+  const path=points.map(([position,value],i)=>`${i?'L':'M'} ${x(position).toFixed(1)} ${y(value).toFixed(1)}`).join(' ');
   svg+=`<path class="${field==='weight_kg'?'chart-line':'chart-line-abdomen'}" d="${path}"/>`;
-  points.forEach(([w,v])=>svg+=`<circle class="${field==='weight_kg'?'chart-point':'chart-point-abdomen'}" cx="${x(w)}" cy="${y(v)}" r="5"><title>Semana ${w}: ${v.toFixed(2)} ${suffix}</title></circle>`);
-  svg+=`<text class="chart-label" x="${L+iw/2}" y="${H-4}" text-anchor="middle">Semanas</text><text class="chart-label" transform="translate(14 ${T+ih/2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text></svg>`;
+
+  points.forEach(([position,value,date])=>{
+    svg+=`<circle class="${field==='weight_kg'?'chart-point':'chart-point-abdomen'}" cx="${x(position)}" cy="${y(value)}" r="5"><title>${fmt(date)} · ${measurementWeekLabel(position)}: ${value.toFixed(2)} ${suffix}</title></circle>`;
+  });
+
+  svg+=`<text class="chart-label" x="${L+iw/2}" y="${H-4}" text-anchor="middle">Semanas de seguimiento</text><text class="chart-label" transform="translate(14 ${T+ih/2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text></svg>`;
   return svg;
 }
 
 
 function timelineEventIcon(type){
-  const icons={WEIGHT_RECORD:'⚖️',CONTROL:'🗓️',PRESCRIPTION:'📋',CLINICAL_ALERT:'⚠️',ALERT_REVIEWED:'✓'};
+  const icons={WEIGHT_RECORD:'⚖️',CONTROL:'🗓️',PRESCRIPTION:'📋',CARE_PLAN:'🎯',CLINICAL_ALERT:'⚠️',ALERT_REVIEWED:'✓'};
   return icons[type]||'•';
 }
 function timelineEventGroup(type){
   if(type==='WEIGHT_RECORD')return 'WEIGHT';
   if(type==='CONTROL')return 'CONTROL';
   if(type==='PRESCRIPTION')return 'PRESCRIPTION';
+  if(type==='CARE_PLAN')return 'PLAN';
   if(['CLINICAL_ALERT','ALERT_REVIEWED'].includes(type))return 'ALERT';
   return 'OTHER';
 }
-function timelineFilterLabel(value){return ({ALL:'Todo',WEIGHT:'Registros',CONTROL:'Controles',PRESCRIPTION:'Indicaciones',ALERT:'Alertas'})[value]||'Todo'}
+function timelineFilterLabel(value){return ({ALL:'Todo',WEIGHT:'Registros',CONTROL:'Controles',PRESCRIPTION:'Indicaciones',PLAN:'Plan',ALERT:'Alertas'})[value]||'Todo'}
 function timelineEventDate(value){return value?formatDateTime(value):'—'}
 function timelineEventMarkup(item){
   const group=timelineEventGroup(item.event_type), severity=String(item.severity||'').toLowerCase();
@@ -5180,7 +5619,7 @@ async function syncDoctorTimeline(renderUI=true,force=false){
 }
 function doctorTimelineSectionMarkup(){return `<section class="card clinical-timeline-card" id="doctorClinicalTimelineSection">
   <div class="card-head"><div><h2 class="section-title">Timeline clínico</h2><div class="muted">Historia longitudinal consolidada de registros, controles, indicaciones y alertas.</div></div><span id="doctorTimelineStatus" class="agenda-sync-status">Actualizado</span></div>
-  <div class="timeline-toolbar"><div class="timeline-filter-buttons">${['ALL','WEIGHT','CONTROL','PRESCRIPTION','ALERT'].map(v=>`<button type="button" class="timeline-filter-btn ${doctorTimelineFilter===v?'active':''}" data-timeline-filter="${v}">${timelineFilterLabel(v)}</button>`).join('')}</div><button type="button" id="refreshDoctorTimeline" class="secondary small-btn">Actualizar</button></div>
+  <div class="timeline-toolbar"><div class="timeline-filter-buttons">${['ALL','WEIGHT','CONTROL','PRESCRIPTION','PLAN','ALERT'].map(v=>`<button type="button" class="timeline-filter-btn ${doctorTimelineFilter===v?'active':''}" data-timeline-filter="${v}">${timelineFilterLabel(v)}</button>`).join('')}</div><button type="button" id="refreshDoctorTimeline" class="secondary small-btn">Actualizar</button></div>
   <div id="doctorClinicalTimelineList">${doctorTimelineMarkup()}</div></section>`}
 function reportMetricCell(label,value,sub=''){return `<div class="report-metric"><span>${esc(label)}</span><strong>${esc(value||'—')}</strong>${sub?`<small>${esc(sub)}</small>`:''}</div>`}
 function buildDoctorLongitudinalReport(includeTimeline=true){
@@ -5188,6 +5627,7 @@ function buildDoctorLongitudinalReport(includeTimeline=true){
   const d=doctorPatientDetail,p=d.profile,recs=[...(d.records||[])].sort((a,b)=>String(a.measured_on).localeCompare(String(b.measured_on))),latest=recs.at(-1)||null;
   const latestWaist=[...recs].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined)||null;
   const outcome=outcomeForPatient(p.user_id),priority=priorityForPatient(p.user_id),timeline=(d.timeline||[]).slice(0,60),activeRx=(d.prescriptions||[]).filter(rx=>!rx.deleted_at);
+  const carePlan=d.carePlan||{goals:[],actions:[]},reportGoals=(carePlan.goals||[]).filter(g=>g.status!=='CANCELLED'),reportActions=(carePlan.actions||[]).filter(a=>a.status!=='CANCELLED');
   const completed=timeline.filter(x=>x.event_type==='CONTROL'&&x.metadata?.status==='COMPLETED');
   const logoUrl=new URL(BRAND_LOGO_URL,APP_URL).href;
   const reportDate=new Intl.DateTimeFormat('es-CL',{timeZone:'America/Santiago',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date());
@@ -5198,6 +5638,7 @@ function buildDoctorLongitudinalReport(includeTimeline=true){
   </style></head><body><div class="page"><div class="top"><div class="brand"><img src="${logoUrl}" alt="BodyCare"><div><h1>Informe longitudinal de seguimiento</h1><div class="sub">BodyCare · Salud y progreso</div><div class="sub">Generado ${esc(reportDate)}</div></div></div><div class="print-actions"><button class="primary" onclick="window.print()">Imprimir / Guardar PDF</button><button class="secondary" onclick="window.close()">Cerrar</button></div></div>
   <h2>Paciente y profesional</h2><div class="box patient-grid">${reportMetricCell('Paciente',p.full_name)}${reportMetricCell('Inicio seguimiento',fmt(p.start_date))}${reportMetricCell('Duración plan',`${p.planned_weeks} semanas`)}${reportMetricCell('Profesional',doctorProfile?.display_name||account?.display_name||'Médico')}${reportMetricCell('Especialidad',doctorProfile?.specialty||'—')}${reportMetricCell('Centro / consulta',doctorProfile?.clinic_name||'—')}</div>
   <h2>Resumen de evolución</h2><div class="metric-grid">${reportMetricCell('Peso inicial',kg(p.initial_weight_kg))}${reportMetricCell('Peso actual',latest?kg(latest.weight_kg):'—',outcome?`${outcomeSigned(outcome.weight_change_kg,' kg',2)} · ${outcomeSigned(outcome.weight_change_pct,'%',1)}`:'—')}${reportMetricCell('Peso meta',p.target_weight_kg?kg(p.target_weight_kg):'—')}${reportMetricCell('Cintura actual',latestWaist?cm(latestWaist.abdominal_circumference_cm):'—',outcome?outcomeSigned(outcome.waist_change_cm,' cm',1):'—')}${reportMetricCell('Adherencia 4 semanas',outcome?outcomePercent(outcome.record_adherence_pct_28d,0):'—')}${reportMetricCell('Asistencia 90 días',outcome?outcomePercent(outcome.attendance_pct,0):'—')}${reportMetricCell('Prioridad actual',priorityLabel(priority.priority))}${reportMetricCell('Próximo control',outcome?nextControlText(outcome.next_control_at):'Sin próximo control')}</div>
+  <h2>Plan de seguimiento</h2><div class="box">${reportGoals.length?`<table><thead><tr><th>Objetivo</th><th>Meta</th><th>Estado</th></tr></thead><tbody>${reportGoals.map(g=>`<tr><td><strong>${esc(g.title)}</strong>${g.description?`<div class="sub">${esc(g.description)}</div>`:''}</td><td>${esc(careGoalTargetText(g))}</td><td>${esc(careGoalStatusLabel(g.status))}</td></tr>`).join('')}</tbody></table>`:'<div class="sub">Sin objetivos compartidos.</div>'}${reportActions.length?`<h3 style="font-size:13px;margin:16px 0 6px">Acciones e hitos</h3><table><thead><tr><th>Acción</th><th>Fecha objetivo</th><th>Estado</th></tr></thead><tbody>${reportActions.map(a=>`<tr><td>${esc(a.title)}${a.patient_note?`<div class="sub">Nota paciente: ${esc(a.patient_note)}</div>`:''}</td><td>${a.due_date?fmt(a.due_date):'—'}</td><td>${esc(careActionStatusLabel(a.status))}</td></tr>`).join('')}</tbody></table>`:''}</div>
   <h2>Indicaciones vigentes</h2><div class="box">${activeRx.length?activeRx.map(rx=>`<div class="rx"><strong>${esc(rx.medication_name)} · ${esc(rx.dose_text)}</strong><span>${esc(rx.frequency_text)}${rx.duration_text?` · ${esc(rx.duration_text)}`:''}${rx.route_text?` · ${esc(rx.route_text)}`:''}</span>${rx.instructions?`<span style="display:block;margin-top:3px">${esc(rx.instructions)}</span>`:''}</div>`).join(''):'<div class="sub">Sin indicaciones activas registradas en BodyCare.</div>'}</div>
   <h2>Controles completados</h2><div class="box">${completed.length?`<table><thead><tr><th>Fecha</th><th>Resumen compartido</th></tr></thead><tbody>${completed.map(c=>`<tr><td>${esc(timelineEventDate(c.event_at))}</td><td>${esc(c.metadata?.outcome_summary||'Sin resumen registrado')}</td></tr>`).join('')}</tbody></table>`:'<div class="sub">Aún no hay controles completados con resumen.</div>'}</div>
   <h2>Historial de registros</h2><div class="box">${recs.length?`<table><thead><tr><th>Fecha</th><th>Semana</th><th>Peso</th><th>Cintura</th></tr></thead><tbody>${recs.map(r=>`<tr><td>${fmt(r.measured_on)}</td><td>${weekOfFor(r.measured_on,p)}</td><td>${kg(r.weight_kg)}</td><td>${cm(r.abdominal_circumference_cm)}</td></tr>`).join('')}</tbody></table>`:'<div class="sub">Sin registros.</div>'}</div>
@@ -5282,9 +5723,12 @@ async function openDoctorPatient(patientId){
       p_doctor_user_id:currentUser.id,
       p_patient_user_id:patientId
     })||[]);
+    const carePlan=(await dbRpc('bodycare_get_care_plan',{p_doctor_user_id:currentUser.id,p_patient_user_id:patientId}))||{goals:[],actions:[]};
+    const nutritionPlan=(await dbRpc('bodycare_get_nutrition_plan',{p_doctor_user_id:currentUser.id,p_patient_user_id:patientId}))||{plan:null,items:[]};
+    const nutritionCatalog=(await dbRpc('bodycare_get_nutrition_catalog',{p_doctor_user_id:currentUser.id}))||[];
     const timeline=(await dbRpc('bodycare_get_patient_timeline',{p_patient_user_id:patientId,p_limit:160})||[]);
     doctorTimelineLastSync=Date.now();
-    doctorPatientDetail={profile:p,records:recs,prescriptions,messages,controls,timeline};
+    doctorPatientDetail={profile:p,records:recs,prescriptions,messages,controls,carePlan,nutritionPlan,nutritionCatalog,timeline};
     const matching=notifications.filter(n=>
       isActionableUnread(n) &&
       DOCTOR_PATIENT_CONTEXT_NOTIFICATION_TYPES.includes(n.type) &&
@@ -5343,6 +5787,253 @@ function renderDoctorPrescriptionForm(){
 }
 
 
+
+function doctorCarePlan(){return doctorPatientDetail?.carePlan||{goals:[],actions:[]}}
+function careGoalFormMarkup(){
+  const goal=(doctorCarePlan().goals||[]).find(g=>g.id===editingCareGoalId)||null;
+  return `<form id="doctorCareGoalForm" class="care-editor-form"><div class="grid care-editor-grid">
+    <div><label for="careGoalType">Tipo</label><select id="careGoalType" required>${[['WEIGHT','Peso'],['WAIST','Circunferencia'],['RECORDING','Registro'],['CUSTOM','Personalizado']].map(([v,l])=>`<option value="${v}" ${goal?.goal_type===v?'selected':''}>${l}</option>`).join('')}</select></div>
+    <div><label for="careGoalTitle">Objetivo</label><input id="careGoalTitle" maxlength="160" required value="${esc(goal?.title||'')}" placeholder="Ej: Alcanzar peso objetivo"></div>
+    <div><label for="careGoalTarget">Valor meta <span class="muted">(opcional)</span></label><input id="careGoalTarget" inputmode="decimal" value="${goal?.target_value!==null&&goal?.target_value!==undefined?String(goal.target_value).replace('.',','):''}" placeholder="Ej: 85"></div>
+    <div><label for="careGoalUnit">Unidad <span class="muted">(opcional)</span></label><input id="careGoalUnit" maxlength="30" value="${esc(goal?.target_unit||'')}" placeholder="kg, cm, días..."></div>
+    <div><label for="careGoalDate">Fecha objetivo <span class="muted">(opcional)</span></label><input id="careGoalDate" type="text" inputmode="numeric" maxlength="10" data-date-cl placeholder="DD/MM/AAAA" value="${goal?.target_date?formatDateCL(goal.target_date):''}"></div>
+  </div><label for="careGoalDescription" style="margin-top:10px">Descripción <span class="muted">(opcional)</span></label><textarea id="careGoalDescription" rows="2" maxlength="1500">${esc(goal?.description||'')}</textarea><div class="form-actions"><button class="primary" type="submit">${goal?'Guardar objetivo':'Agregar objetivo'}</button>${goal?'<button type="button" class="secondary" id="cancelCareGoalEdit">Cancelar edición</button>':''}</div></form>`;
+}
+function careActionFormMarkup(){
+  const action=(doctorCarePlan().actions||[]).find(a=>a.id===editingCareActionId)||null;
+  const goals=(doctorCarePlan().goals||[]).filter(g=>g.status!=='CANCELLED'||g.id===action?.goal_id);
+  return `<form id="doctorCareActionForm" class="care-editor-form"><div class="grid care-editor-grid">
+    <div><label for="careActionGoal">Objetivo relacionado</label><select id="careActionGoal"><option value="">Sin objetivo específico</option>${goals.map(g=>`<option value="${g.id}" ${action?.goal_id===g.id?'selected':''}>${esc(g.title)}</option>`).join('')}</select></div>
+    <div><label for="careActionTitle">Acción / hito</label><input id="careActionTitle" maxlength="180" required value="${esc(action?.title||'')}" placeholder="Ej: Registrar peso esta semana"></div>
+    <div><label for="careActionDue">Fecha objetivo <span class="muted">(opcional)</span></label><input id="careActionDue" type="text" inputmode="numeric" maxlength="10" data-date-cl placeholder="DD/MM/AAAA" value="${action?.due_date?formatDateCL(action.due_date):''}"></div>
+  </div><label for="careActionDescription" style="margin-top:10px">Detalle <span class="muted">(opcional)</span></label><textarea id="careActionDescription" rows="2" maxlength="1500">${esc(action?.description||'')}</textarea><div class="form-actions"><button class="primary" type="submit">${action?'Guardar acción':'Asignar acción'}</button>${action?'<button type="button" class="secondary" id="cancelCareActionEdit">Cancelar edición</button>':''}</div></form>`;
+}
+function doctorCareGoalCard(goal){
+  return `<article class="care-goal-card ${String(goal.status).toLowerCase()}"><div class="care-card-head"><div><span class="care-type-chip">${careGoalTypeLabel(goal.goal_type)}</span><strong>${esc(goal.title)}</strong></div><span class="care-status-chip ${String(goal.status).toLowerCase()}">${careGoalStatusLabel(goal.status)}</span></div>${goal.description?`<p>${esc(goal.description)}</p>`:''}<div class="care-goal-meta"><span><b>Meta:</b> ${esc(careGoalTargetText(goal))}</span></div><div class="care-action-buttons"><button type="button" class="secondary small-btn" data-edit-care-goal="${goal.id}">Editar</button>${goal.status!=='ACHIEVED'?`<button type="button" class="secondary small-btn" data-care-goal-status="${goal.id}" data-status="ACHIEVED">Logrado</button>`:''}${goal.status==='ACTIVE'?`<button type="button" class="secondary small-btn" data-care-goal-status="${goal.id}" data-status="PAUSED">Pausar</button>`:''}${['PAUSED','ACHIEVED','CANCELLED'].includes(goal.status)?`<button type="button" class="secondary small-btn" data-care-goal-status="${goal.id}" data-status="ACTIVE">Reactivar</button>`:''}${goal.status!=='CANCELLED'?`<button type="button" class="link-danger small-btn" data-care-goal-status="${goal.id}" data-status="CANCELLED">Cancelar</button>`:''}</div></article>`;
+}
+function doctorCareActionCard(action){
+  return `<article class="care-action-card ${String(action.status).toLowerCase()}"><div class="care-card-head"><div><strong>${esc(action.title)}</strong>${action.due_date?`<span class="care-due-date">Fecha objetivo ${fmt(action.due_date)}</span>`:''}</div><span class="care-status-chip ${String(action.status).toLowerCase()}">${careActionStatusLabel(action.status)}</span></div>${action.description?`<p>${esc(action.description)}</p>`:''}${action.patient_note?`<div class="care-patient-note"><b>Nota del paciente:</b> ${esc(action.patient_note)}</div>`:''}<div class="care-action-buttons"><button type="button" class="secondary small-btn" data-edit-care-action="${action.id}">Editar</button>${action.status!=='COMPLETED'?`<button type="button" class="secondary small-btn" data-doctor-care-action="${action.id}" data-status="COMPLETED">Completar</button>`:''}${['COMPLETED','CANCELLED'].includes(action.status)?`<button type="button" class="secondary small-btn" data-doctor-care-action="${action.id}" data-status="PENDING">Reabrir</button>`:''}${action.status!=='CANCELLED'?`<button type="button" class="link-danger small-btn" data-doctor-care-action="${action.id}" data-status="CANCELLED">Cancelar</button>`:''}</div></article>`;
+}
+function doctorCarePlanSectionMarkup(){
+  const plan=doctorCarePlan(),counts=carePlanCounts(plan),progress=carePlanProgress(plan);
+  return `<section class="card doctor-care-plan-section" id="doctorCarePlanSection"><div class="card-head"><div><h2 class="section-title">Plan de seguimiento</h2><div class="muted">Objetivos y acciones compartidas con el paciente. BodyCare registra quién realiza cada cambio.</div></div><span class="clinical-disclaimer">Definido por profesional</span></div>
+  <div class="care-plan-summary"><div><span>Objetivos activos</span><strong>${counts.activeGoals}</strong></div><div><span>Objetivos logrados</span><strong>${counts.achievedGoals}</strong></div><div><span>Acciones pendientes</span><strong>${counts.pendingActions}</strong></div><div><span>Acciones completadas</span><strong>${counts.completedActions}</strong></div></div>
+  <div class="care-progress-card"><div><strong>Avance de acciones</strong><span>${progress}% completado</span></div><div class="care-progress-track"><i style="width:${progress}%"></i></div></div>
+  <details class="care-editor-panel" ${editingCareGoalId?'open':''}><summary>${editingCareGoalId?'Editar objetivo':'Agregar objetivo'}</summary>${careGoalFormMarkup()}</details>
+  <div class="care-goal-list">${(plan.goals||[]).length?(plan.goals||[]).map(doctorCareGoalCard).join(''):'<div class="empty-state">Aún no hay objetivos compartidos.</div>'}</div>
+  <details class="care-editor-panel" ${editingCareActionId?'open':''}><summary>${editingCareActionId?'Editar acción':'Asignar acción / hito'}</summary>${careActionFormMarkup()}</details>
+  <div class="care-action-list">${(plan.actions||[]).length?(plan.actions||[]).map(doctorCareActionCard).join(''):'<div class="empty-state">Aún no hay acciones asignadas.</div>'}</div></section>`;
+}
+function renderDoctorCarePlanSection(){
+  const old=document.getElementById('doctorCarePlanSection');if(!old||!doctorPatientDetail)return;
+  const temp=document.createElement('div');temp.innerHTML=doctorCarePlanSectionMarkup().trim();const fresh=temp.firstElementChild;
+  if(fresh){old.replaceWith(fresh);bindDoctorCarePlan();bindDateCLInputs(fresh)}
+}
+async function syncDoctorCarePlan(patientId,renderUI=true){
+  if(!hasRole('DOCTOR')||!patientId)return;
+  try{
+    const plan=await dbRpc('bodycare_get_care_plan',{p_doctor_user_id:currentUser.id,p_patient_user_id:patientId});
+    if(doctorPatientDetail?.profile?.user_id===patientId){doctorPatientDetail.carePlan=plan||{goals:[],actions:[]};if(renderUI&&!userIsTyping())renderDoctorCarePlanSection()}
+  }catch(err){console.warn('Doctor care plan sync failed',err)}
+}
+async function saveDoctorCareGoal(e){
+  e.preventDefault();const patientId=doctorPatientDetail?.profile?.user_id;if(!patientId)return;
+  let targetDate=null;try{targetDate=requireDateCL('careGoalDate','Fecha objetivo',true)}catch(err){alert(err.message);return}
+  const raw=document.getElementById('careGoalTarget')?.value.trim()||'',target=raw===''?null:parseDecimal(raw);
+  if(raw!==''&&!Number.isFinite(target)){alert('Valor meta: usa un número válido.');return}
+  try{
+    await dbRpc('bodycare_save_care_goal',{p_goal_id:editingCareGoalId||null,p_patient_user_id:patientId,p_goal_type:document.getElementById('careGoalType').value,p_title:document.getElementById('careGoalTitle').value.trim(),p_description:document.getElementById('careGoalDescription').value.trim()||null,p_target_value:target,p_target_unit:document.getElementById('careGoalUnit').value.trim()||null,p_target_date:targetDate});
+    editingCareGoalId=null;await syncDoctorCarePlan(patientId,false);renderDoctorCarePlanSection();await syncDoctorTimeline(true,true);showToast('Plan actualizado','El objetivo quedó compartido con el paciente.','CARE_PLAN_UPDATED');
+  }catch(err){alert('No fue posible guardar el objetivo: '+err.message)}
+}
+async function saveDoctorCareAction(e){
+  e.preventDefault();const patientId=doctorPatientDetail?.profile?.user_id;if(!patientId)return;
+  let due=null;try{due=requireDateCL('careActionDue','Fecha objetivo de acción',true)}catch(err){alert(err.message);return}
+  try{
+    await dbRpc('bodycare_save_care_action',{p_action_id:editingCareActionId||null,p_patient_user_id:patientId,p_goal_id:document.getElementById('careActionGoal').value||null,p_title:document.getElementById('careActionTitle').value.trim(),p_description:document.getElementById('careActionDescription').value.trim()||null,p_due_date:due});
+    editingCareActionId=null;await syncDoctorCarePlan(patientId,false);renderDoctorCarePlanSection();await syncDoctorTimeline(true,true);showToast('Acción compartida','El paciente verá la acción en Mi plan.','CARE_ACTION_UPDATED');
+  }catch(err){alert('No fue posible guardar la acción: '+err.message)}
+}
+async function setDoctorCareGoalStatus(id,status){
+  try{await dbRpc('bodycare_set_care_goal_status',{p_goal_id:id,p_status:status});await syncDoctorCarePlan(doctorPatientDetail.profile.user_id,false);renderDoctorCarePlanSection();await syncDoctorTimeline(true,true)}
+  catch(err){alert('No fue posible actualizar el objetivo: '+err.message)}
+}
+async function setDoctorCareActionStatus(id,status){
+  try{await dbRpc('bodycare_set_care_action_status',{p_action_id:id,p_status:status,p_patient_note:null});await syncDoctorCarePlan(doctorPatientDetail.profile.user_id,false);renderDoctorCarePlanSection();await syncDoctorTimeline(true,true)}
+  catch(err){alert('No fue posible actualizar la acción: '+err.message)}
+}
+function bindDoctorCarePlan(){
+  document.getElementById('doctorCareGoalForm')?.addEventListener('submit',saveDoctorCareGoal);
+  document.getElementById('doctorCareActionForm')?.addEventListener('submit',saveDoctorCareAction);
+  document.getElementById('cancelCareGoalEdit')?.addEventListener('click',()=>{editingCareGoalId=null;renderDoctorCarePlanSection()});
+  document.getElementById('cancelCareActionEdit')?.addEventListener('click',()=>{editingCareActionId=null;renderDoctorCarePlanSection()});
+  document.querySelectorAll('[data-edit-care-goal]').forEach(btn=>btn.addEventListener('click',()=>{editingCareGoalId=btn.dataset.editCareGoal;renderDoctorCarePlanSection();document.getElementById('doctorCarePlanSection')?.scrollIntoView({behavior:'smooth',block:'start'})}));
+  document.querySelectorAll('[data-edit-care-action]').forEach(btn=>btn.addEventListener('click',()=>{editingCareActionId=btn.dataset.editCareAction;renderDoctorCarePlanSection();document.getElementById('doctorCarePlanSection')?.scrollIntoView({behavior:'smooth',block:'start'})}));
+  document.querySelectorAll('[data-care-goal-status]').forEach(btn=>btn.addEventListener('click',()=>setDoctorCareGoalStatus(btn.dataset.careGoalStatus,btn.dataset.status)));
+  document.querySelectorAll('[data-doctor-care-action]').forEach(btn=>btn.addEventListener('click',()=>setDoctorCareActionStatus(btn.dataset.doctorCareAction,btn.dataset.status)));
+}
+
+
+function doctorNutritionData(){return doctorPatientDetail?.nutritionPlan||{plan:null,items:[]}}
+function doctorNutritionCatalog(){return doctorPatientDetail?.nutritionCatalog||[]}
+function nutritionPortionMetrics(item){
+  const n=nutritionEstimate(item,Number(item.portion_grams||0));
+  return `${nutritionNum(n.kcal,0)} kcal · P ${nutritionNum(n.protein_g,1)} g · Az ${nutritionNum(n.sugars_g,1)} g · G ${nutritionNum(n.fat_g,1)} g`;
+}
+function doctorNutritionMealMarkup(type){
+  const rows=(doctorNutritionData().items||[]).filter(i=>i.meal_type===type);
+  const m=nutritionMeal(type);
+  return `<details class="nutrition-doctor-meal" ${type==='BREAKFAST'?'open':''}>
+    <summary><span>${m.label} · ${m.time}</span><b>${rows.length}</b></summary>
+    ${rows.length?`<div class="nutrition-plan-item-list">${rows.map(i=>`<div class="nutrition-plan-item-row">
+      <div><strong>${esc(i.name)}</strong><span>${nutritionNum(i.portion_grams,0)} g · ${nutritionPortionMetrics(i)}</span><small>${esc(i.source_text||'')}${i.reference_quality==='VERIFY_LABEL'?' · Confirmar etiqueta':''}</small></div>
+      <div class="nutrition-row-actions"><button type="button" class="secondary small-btn" data-edit-nutrition-item="${i.id}">Editar</button><button type="button" class="link-danger small-btn" data-remove-nutrition-item="${i.id}">Quitar</button></div>
+    </div>`).join('')}</div>`:'<div class="empty-state">Sin alimentos definidos para esta comida.</div>'}
+  </details>`;
+}
+function doctorNutritionItemFormMarkup(){
+  const data=doctorNutritionData(),item=(data.items||[]).find(i=>i.id===editingNutritionPlanItemId)||null;
+  const catalog=doctorNutritionCatalog();
+  return `<form id="doctorNutritionItemForm" class="nutrition-item-editor">
+    <div class="grid nutrition-editor-grid">
+      <div><label>Comida</label><select id="nutritionItemMeal">${NUTRITION_MEALS.map(m=>`<option value="${m.type}" ${item?.meal_type===m.type?'selected':''}>${m.label} · ${m.time}</option>`).join('')}</select></div>
+      <div><label>Alimento</label><select id="nutritionItemFood">${catalog.map(f=>`<option value="${f.id}" ${item?.food_id===f.id?'selected':''}>${esc(f.name)}${f.reference_quality==='VERIFY_LABEL'?' ⚠':''}</option>`).join('')}</select></div>
+      <div><label>Porción</label><div class="suffix-input"><input id="nutritionItemGrams" type="number" min="1" max="5000" step="1" value="${item?Number(item.portion_grams):''}" required><span>g</span></div></div>
+      <div><label>Grupo / elección</label><input id="nutritionItemGroup" maxlength="60" value="${esc(item?.option_group||'')}" placeholder="Ej: PROTEINA"></div>
+    </div>
+    <label style="margin-top:8px">Texto de pauta</label><input id="nutritionItemSourceText" maxlength="300" value="${esc(item?.source_text||'')}" placeholder="Ej: elegir una alternativa">
+    <label style="margin-top:8px">Instrucción</label><input id="nutritionItemInstructions" maxlength="500" value="${esc(item?.instructions||'')}">
+    <div class="form-actions"><button class="primary" type="submit">${item?'Guardar alimento':'Agregar alimento'}</button>${item?'<button type="button" class="secondary" id="cancelNutritionItemEdit">Cancelar edición</button>':''}</div>
+  </form>`;
+}
+function doctorNutritionSectionMarkup(){
+  const data=doctorNutritionData(),p=data.plan;
+  if(!p)return `<section class="card doctor-nutrition-section" id="doctorNutritionSection">
+    <div class="card-head"><div><h2 class="section-title">Indicación nutricional</h2><div class="muted">Programa alimentario ajustable y diario nutricional para el paciente.</div></div><span class="clinical-disclaimer">Nueva indicación</span></div>
+    <div class="nutrition-template-preview"><strong>Plan Nutricional Detox</strong><span>Basado en el documento aportado: 08:00 desayuno · 10:30 snack · 14:00 almuerzo · 17:00 snack · 20:00 cena.</span></div>
+    <button type="button" id="activateDetoxPlan" class="primary">Activar Plan Detox</button>
+    <div class="clinical-settings-note">Las metas de calorías, proteína, azúcares y grasa no vienen definidas en el documento y deben ser establecidas por el profesional.</div>
+  </section>`;
+  return `<section class="card doctor-nutrition-section" id="doctorNutritionSection">
+    <div class="card-head"><div><h2 class="section-title">Indicación nutricional · ${esc(p.program_name)}</h2><div class="muted">Ajusta metas, porciones y alimentos. El paciente verá la pauta en Nutrición.</div></div><span class="nutrition-program-chip">Activo</span></div>
+    <form id="doctorNutritionTargetsForm">
+      <div class="grid nutrition-target-editor">
+        <div><label>Calorías diarias</label><div class="suffix-input"><input id="nutritionKcalTarget" type="number" min="0" step="1" value="${p.daily_kcal_target??''}"><span>kcal</span></div></div>
+        <div><label>Proteína diaria</label><div class="suffix-input"><input id="nutritionProteinTarget" type="number" min="0" step="1" value="${p.daily_protein_g_target??''}"><span>g</span></div></div>
+        <div><label>Azúcares totales</label><div class="suffix-input"><input id="nutritionSugarTarget" type="number" min="0" step="1" value="${p.daily_sugars_g_target??''}"><span>g</span></div></div>
+        <div><label>Grasa total</label><div class="suffix-input"><input id="nutritionFatTarget" type="number" min="0" step="1" value="${p.daily_fat_g_target??''}"><span>g</span></div></div>
+      </div>
+      <label>Indicaciones generales</label><textarea id="nutritionInstructions" rows="2">${esc(p.instructions||'')}</textarea>
+      <div class="grid nutrition-text-grid">
+        <div><label>Evitar según pauta</label><textarea id="nutritionAvoid" rows="3">${esc(p.avoid_text||'')}</textarea></div>
+        <div><label>Consumo libre según pauta</label><textarea id="nutritionFree" rows="3">${esc(p.free_text||'')}</textarea></div>
+      </div>
+      <button class="primary" type="submit">Guardar pauta diaria</button>
+    </form>
+    ${nutritionPlanSourceNotice()}
+    <div class="nutrition-doctor-meals">${NUTRITION_MEALS.map(m=>doctorNutritionMealMarkup(m.type)).join('')}</div>
+    <details class="care-editor-panel" ${editingNutritionPlanItemId?'open':''}><summary>${editingNutritionPlanItemId?'Editar alimento de pauta':'Agregar alimento a la pauta'}</summary>${doctorNutritionItemFormMarkup()}</details>
+    <details class="care-editor-panel"><summary>Agregar alimento personalizado desde etiqueta</summary>
+      <form id="customNutritionFoodForm" class="care-editor-form">
+        <div class="grid nutrition-custom-grid">
+          <div><label>Nombre</label><input id="customFoodName" required maxlength="160"></div>
+          <div><label>Categoría</label><input id="customFoodCategory" maxlength="80" value="Personalizado"></div>
+          <div><label>Porción de referencia</label><input id="customFoodServingLabel" maxlength="80" placeholder="Ej: 1 rebanada"></div>
+          <div><label>Gramos por porción</label><input id="customFoodServingGrams" type="number" min="1" step="1" required></div>
+          <div><label>kcal /100 g</label><input id="customFoodKcal" type="number" min="0" step="0.1" required></div>
+          <div><label>Proteína /100 g</label><input id="customFoodProtein" type="number" min="0" step="0.1" required></div>
+          <div><label>Azúcares /100 g</label><input id="customFoodSugar" type="number" min="0" step="0.1" required></div>
+          <div><label>Grasa /100 g</label><input id="customFoodFat" type="number" min="0" step="0.1" required></div>
+        </div>
+        <label>Fuente / etiqueta</label><input id="customFoodSource" maxlength="300" placeholder="Ej: etiqueta nutricional marca X">
+        <button class="secondary" type="submit">Guardar alimento en mi catálogo</button>
+      </form>
+    </details>
+  </section>`;
+}
+async function syncDoctorNutrition(patientId,renderUI=true){
+  if(!doctorPatientDetail||doctorPatientDetail.profile.user_id!==patientId)return;
+  try{
+    const [plan,catalog]=await Promise.all([
+      dbRpc('bodycare_get_nutrition_plan',{p_doctor_user_id:currentUser.id,p_patient_user_id:patientId}),
+      dbRpc('bodycare_get_nutrition_catalog',{p_doctor_user_id:currentUser.id})
+    ]);
+    doctorPatientDetail.nutritionPlan=plan||{plan:null,items:[]};
+    doctorPatientDetail.nutritionCatalog=catalog||[];
+    if(renderUI&&!userIsTyping())renderDoctorNutritionSection();
+  }catch(err){console.warn('Doctor nutrition sync failed',err)}
+}
+function renderDoctorNutritionSection(){
+  const old=document.getElementById('doctorNutritionSection');if(!old)return;
+  const temp=document.createElement('div');temp.innerHTML=doctorNutritionSectionMarkup().trim();const fresh=temp.firstElementChild;
+  if(fresh){old.replaceWith(fresh);bindDoctorNutrition()}
+}
+async function activateDoctorDetoxPlan(){
+  const patientId=doctorPatientDetail?.profile?.user_id;if(!patientId)return;
+  try{
+    await dbRpc('bodycare_activate_detox_nutrition_plan',{p_patient_user_id:patientId});
+    editingNutritionPlanItemId=null;await syncDoctorNutrition(patientId,false);renderDoctorNutritionSection();
+    showToast('Plan nutricional activado','Ahora define las metas diarias antes de iniciar el seguimiento.','NUTRITION_PLAN_UPDATED');
+  }catch(err){alert('No fue posible activar el plan: '+err.message)}
+}
+async function saveDoctorNutritionTargets(e){
+  e.preventDefault();const patientId=doctorPatientDetail?.profile?.user_id;if(!patientId)return;
+  const val=id=>{const raw=document.getElementById(id)?.value.trim();return raw?Number(raw):0};
+  try{
+    await dbRpc('bodycare_update_nutrition_plan',{
+      p_patient_user_id:patientId,p_daily_kcal_target:val('nutritionKcalTarget'),p_daily_protein_g_target:val('nutritionProteinTarget'),
+      p_daily_sugars_g_target:val('nutritionSugarTarget'),p_daily_fat_g_target:val('nutritionFatTarget'),
+      p_instructions:document.getElementById('nutritionInstructions')?.value||null,p_avoid_text:document.getElementById('nutritionAvoid')?.value||null,p_free_text:document.getElementById('nutritionFree')?.value||null
+    });
+    await syncDoctorNutrition(patientId,false);renderDoctorNutritionSection();showToast('Pauta guardada','Las metas nutricionales fueron actualizadas.','NUTRITION_PLAN_UPDATED');
+  }catch(err){alert('No fue posible guardar la pauta: '+err.message)}
+}
+async function saveDoctorNutritionItem(e){
+  e.preventDefault();const patientId=doctorPatientDetail?.profile?.user_id;if(!patientId)return;
+  try{
+    await dbRpc('bodycare_save_nutrition_plan_item',{
+      p_item_id:editingNutritionPlanItemId||null,p_patient_user_id:patientId,p_meal_type:document.getElementById('nutritionItemMeal').value,
+      p_food_id:document.getElementById('nutritionItemFood').value,p_portion_grams:Number(document.getElementById('nutritionItemGrams').value),
+      p_option_group:document.getElementById('nutritionItemGroup').value.trim()||null,p_source_text:document.getElementById('nutritionItemSourceText').value.trim()||null,
+      p_instructions:document.getElementById('nutritionItemInstructions').value.trim()||null
+    });
+    editingNutritionPlanItemId=null;await syncDoctorNutrition(patientId,false);renderDoctorNutritionSection();
+  }catch(err){alert('No fue posible guardar el alimento: '+err.message)}
+}
+async function removeDoctorNutritionItem(id){
+  if(!confirm('¿Quitar este alimento de la pauta?'))return;
+  try{await dbRpc('bodycare_remove_nutrition_plan_item',{p_item_id:id});await syncDoctorNutrition(doctorPatientDetail.profile.user_id,false);renderDoctorNutritionSection()}
+  catch(err){alert('No fue posible quitar el alimento: '+err.message)}
+}
+async function saveCustomNutritionFood(e){
+  e.preventDefault();
+  try{
+    await dbRpc('bodycare_save_custom_nutrition_food',{
+      p_name:document.getElementById('customFoodName').value.trim(),p_category:document.getElementById('customFoodCategory').value.trim(),
+      p_serving_label:document.getElementById('customFoodServingLabel').value.trim()||null,p_serving_grams:Number(document.getElementById('customFoodServingGrams').value),
+      p_kcal_100g:Number(document.getElementById('customFoodKcal').value),p_protein_100g:Number(document.getElementById('customFoodProtein').value),
+      p_sugars_100g:Number(document.getElementById('customFoodSugar').value),p_fat_100g:Number(document.getElementById('customFoodFat').value),
+      p_source_detail:document.getElementById('customFoodSource').value.trim()||null
+    });
+    await syncDoctorNutrition(doctorPatientDetail.profile.user_id,false);renderDoctorNutritionSection();
+    showToast('Alimento agregado','Ya está disponible en tu catálogo nutricional.','NUTRITION_PLAN_UPDATED');
+  }catch(err){alert('No fue posible guardar el alimento: '+err.message)}
+}
+function bindDoctorNutrition(){
+  document.getElementById('activateDetoxPlan')?.addEventListener('click',activateDoctorDetoxPlan);
+  document.getElementById('doctorNutritionTargetsForm')?.addEventListener('submit',saveDoctorNutritionTargets);
+  document.getElementById('doctorNutritionItemForm')?.addEventListener('submit',saveDoctorNutritionItem);
+  document.getElementById('customNutritionFoodForm')?.addEventListener('submit',saveCustomNutritionFood);
+  document.getElementById('cancelNutritionItemEdit')?.addEventListener('click',()=>{editingNutritionPlanItemId=null;renderDoctorNutritionSection()});
+  document.querySelectorAll('[data-edit-nutrition-item]').forEach(btn=>btn.addEventListener('click',()=>{editingNutritionPlanItemId=btn.dataset.editNutritionItem;renderDoctorNutritionSection();document.getElementById('doctorNutritionSection')?.scrollIntoView({behavior:'smooth',block:'start'})}));
+  document.querySelectorAll('[data-remove-nutrition-item]').forEach(btn=>btn.addEventListener('click',()=>removeDoctorNutritionItem(btn.dataset.removeNutritionItem)));
+  const food=document.getElementById('nutritionItemFood'),grams=document.getElementById('nutritionItemGrams');
+  if(food&&grams&&!editingNutritionPlanItemId){
+    const f=doctorNutritionCatalog().find(x=>x.id===food.value);if(f)grams.value=String(Math.round(Number(f.reference_serving_grams||100)));
+    food.addEventListener('change',()=>{const x=doctorNutritionCatalog().find(v=>v.id===food.value);if(x)grams.value=String(Math.round(Number(x.reference_serving_grams||100)))});
+  }
+}
+
 function doctorPatientDetailView(){
   const d=doctorPatientDetail;if(!d)return doctorView();
   const p=d.profile,recs=d.records,latest=recs.at(-1);
@@ -5358,6 +6049,7 @@ function doctorPatientDetailView(){
       <div class="metric"><span>Peso meta</span><strong>${p.target_weight_kg?kg(p.target_weight_kg):'—'}</strong></div>
       <div class="metric"><span>Cintura actual</span><strong>${waist?cm(waist.abdominal_circumference_cm):'—'}</strong></div>
     </section>
+    ${doctorCarePlanSectionMarkup()}
     <section class="card"><h2 class="section-title">Evolución de peso</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'weight_kg',p.target_weight_kg?Number(p.target_weight_kg):null,'Peso (kg)','kg')}</div></section>
     <section class="card"><h2 class="section-title">Circunferencia abdominal</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'abdominal_circumference_cm',null,'Circunferencia (cm)','cm')}</div></section>
     <section class="card" id="doctorControlsSection">
@@ -5390,6 +6082,8 @@ function doctorPatientDetailView(){
       <div id="doctorControlList">${controlListMarkup(d.controls||[],'doctor')}</div>
     </section>
 
+    ${doctorNutritionSectionMarkup()}
+
     <section class="card">
       <div class="card-head"><div><h2 class="section-title">Indicación farmacológica</h2><div class="muted">Crea una nueva indicación o selecciona una existente para editarla.</div></div></div>
       <div class="integration-note">La receta electrónica, firma y SNRE quedan pendientes. Esta versión permite crear, modificar, retirar y compartir la indicación dentro de BodyCare.</div>
@@ -5411,6 +6105,8 @@ function doctorPatientDetailView(){
     ${doctorTimelineSectionMarkup()}`);
   bindCommonHeader();
   bindDoctorAlertPanel();
+  bindDoctorCarePlan();
+  bindDoctorNutrition();
   bindDoctorTimeline();
   document.getElementById('doctorLongitudinalReport')?.addEventListener('click',generateDoctorLongitudinalReport);
   renderDoctorMessageThread();
@@ -5420,7 +6116,7 @@ function doctorPatientDetailView(){
   document.getElementById('doctorControlForm')?.addEventListener('submit',createDoctorControl);
   document.getElementById('doctorControlSyncStatus')?.addEventListener('click',()=>syncDoctorControls(p.user_id));
   bindDateCLInputs();
-  document.getElementById('backPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorTimelineFilter='ALL';doctorTimelineLastSync=0;doctorPatientDetail=null;doctorView()});
+  document.getElementById('backPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;editingCareGoalId=null;editingCareActionId=null;doctorTimelineFilter='ALL';doctorTimelineLastSync=0;doctorPatientDetail=null;doctorView()});
   bindDoctorPrescriptionForm();
   document.getElementById('doctorPrescriptionSyncStatus')?.addEventListener('click',()=>syncDoctorPrescriptions(p.user_id));
   document.getElementById('doctorMessageForm')?.addEventListener('submit',sendDoctorMessage);
@@ -5934,7 +6630,7 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){
