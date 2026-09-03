@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='24.0';
+const APP_VERSION='24.1';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -17,12 +17,39 @@ const PASSKEY_UNLOCKED_KEY='bodycare_passkey_unlocked_session_v1';
 const PASSKEY_OFFER_PREFIX='bodycare_passkey_offer_';
 
 const app=document.getElementById('app');
+
+const startupFailureView=message=>{
+  try{
+    if(!app)return;
+    app.innerHTML=`<main class="shell">
+      <section class="card auth-card startup-error-card">
+        <div class="brandrow" style="justify-content:center">
+          <img src="${BRAND_LOGO_URL}" alt="BodyCare" class="brand-image brand-image-small" onerror="this.style.display='none'">
+          <div><div class="brand">BodyCare</div><div class="muted">Recuperación de inicio</div></div>
+        </div>
+        <h2 class="section-title" style="margin-top:18px">No fue posible iniciar BodyCare</h2>
+        <p class="muted">La aplicación detectó un error de arranque. Tus datos permanecen en Supabase.</p>
+        <div class="notice warning">${String(message||'Error inesperado').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</div>
+        <button type="button" class="primary" onclick="location.reload()">Reintentar</button>
+      </section>
+      <div class="footer">BodyCare · Salud y progreso · v${APP_VERSION}</div>
+    </main>`;
+  }catch{}
+};
+window.addEventListener('error',e=>{
+  console.error('BodyCare startup error',e.error||e.message);
+  startupFailureView(e?.error?.message||e?.message||'Error de ejecución');
+});
+window.addEventListener('unhandledrejection',e=>{
+  console.error('BodyCare unhandled rejection',e.reason);
+});
+
 let session=null, currentUser=null, profile=null, records=[];
 let account=null, roles=[], activePortal='PATIENT';
 let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], patientControls=[], supportTickets=[];
 let patientCarePlan={goals:[],actions:[]}, patientCarePlanDoctorId=null, patientCarePlanSyncing=false;
 let patientNutritionPlan={plan:null,items:[]}, patientNutritionCatalog=[], patientNutritionDay=null;
-let patientNutritionDoctorId=null, patientNutritionDate=today(), patientNutritionSyncing=false;
+let patientNutritionDoctorId=null, patientNutritionDate=null, patientNutritionSyncing=false;
 let editingNutritionPlanItemId=null;
 let doctorProfile=null, doctorPatients=[], doctorPatientDetail=null;
 let doctorPriorities=[], doctorAlertSettings=null;
@@ -67,6 +94,7 @@ let sessionRefreshPromise=null;
 
 
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+patientNutritionDate=today();
 const parseDate=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(Date.UTC(y,m-1,d))};
 const fmt=s=>{if(!s)return '—';const[y,m,d]=s.split('-');return `${d}/${m}/${y}`};
 const formatDateCL=iso=>{
@@ -4691,7 +4719,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v24.0'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v24.1'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();

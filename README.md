@@ -632,3 +632,11 @@ https://lsueyras.github.io/pesocare/
   - RP ID: lsueyras.github.io
   - Origin: https://lsueyras.github.io
 - IMPORTANTE: cambiar posteriormente el RP ID a bodycare.cl requiere volver a enrolar passkeys.
+
+
+## BodyCare V24.1 — Startup Hotfix
+- Corrige `patientNutritionDate=today()` ejecutado antes de inicializar `today`.
+- `patientNutritionDate` se inicializa después de declarar `today()`.
+- Evita el bloqueo permanente en `Cargando aplicación…`.
+- Agrega pantalla visible de recuperación ante futuros errores de arranque.
+- Conserva V23 Nutrición, gráficos con todas las mediciones y V24 Passkeys.

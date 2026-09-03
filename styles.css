@@ -2623,3 +2623,11 @@ input[data-date-cl].date-invalid{
   .security-key-actions>*{flex:1}
   .security-header-button{width:40px;height:40px}
 }
+
+/* BodyCare V24.1 — protección de arranque */
+.startup-error-card .notice.warning{
+  margin:14px 0;
+  background:#fffaeb;
+  border:1px solid #fedf89;
+  color:#93370d;
+}
