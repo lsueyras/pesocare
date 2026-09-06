@@ -640,3 +640,50 @@ https://lsueyras.github.io/pesocare/
 - Evita el bloqueo permanente en `Cargando aplicación…`.
 - Agrega pantalla visible de recuperación ante futuros errores de arranque.
 - Conserva V23 Nutrición, gráficos con todas las mediciones y V24 Passkeys.
+
+
+## BodyCare V24.2 — Passkey UX
+- Detecta `passkey_disabled` sin abrir alerts del sistema.
+- Muestra `Biometría pendiente de activación`.
+- Botón de enrolamiento deshabilitado hasta activar Passkeys en Supabase.
+- Modal de Seguridad se adapta como bottom sheet en iPhone.
+- No ofrece enrolamiento automático mientras Passkeys esté desactivado.
+- Login con correo y contraseña continúa funcionando normalmente.
+
+
+## BodyCare V25 — Remote Care Operations
+- Nuevo rol `ASSISTANT`.
+- Administración permite crear y editar usuarios Asistente.
+- Médico:
+  - vincula asistentes a su equipo;
+  - asigna pacientes;
+  - ve carga, tareas y escalaciones;
+  - resuelve escalaciones;
+  - mantiene control exclusivo de decisiones clínicas.
+- Asistente escritorio:
+  - cola priorizada;
+  - controles del día;
+  - confirmaciones pendientes;
+  - falta de registros;
+  - tareas y escalaciones;
+  - contactabilidad;
+  - registro de gestiones.
+- Asistente móvil:
+  - navegación inferior;
+  - cola Hoy/Pendientes;
+  - botones Llamar / WhatsApp / Escalar;
+  - perfil paciente operacional.
+- Paciente:
+  - nueva ficha de contactabilidad con teléfono, WhatsApp, canal y horario preferido.
+- Seguridad:
+  - asistente solo accede a pacientes explícitamente asignados;
+  - no puede modificar prescripciones, pauta nutricional, objetivos clínicos ni cerrar alertas médicas.
+- Auditoría:
+  - `remote_care_tasks`;
+  - `remote_care_events`;
+  - confirmaciones de control registran actor asistente.
+- Push:
+  - ASSISTANT_TASK_ASSIGNED
+  - ASSISTANT_PATIENT_ASSIGNED
+  - ASSISTANT_ESCALATION
+  - ASSISTANT_ESCALATION_RESOLVED

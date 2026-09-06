@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='24.1';
+const APP_VERSION='25.0';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -46,6 +46,10 @@ window.addEventListener('unhandledrejection',e=>{
 
 let session=null, currentUser=null, profile=null, records=[];
 let account=null, roles=[], activePortal='PATIENT';
+let patientContactDetails={phone:null,whatsapp_phone:null,preferred_channel:'APP',contact_window:null};
+let assistantProfile=null, assistantDashboard=[], assistantPatientDetail=null;
+let assistantFilter='ALL', assistantSearch='', assistantSyncing=false;
+let doctorAssistantOps={assistants:[],assignments:[],escalations:[]}, availableAssistants=[];
 let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], patientControls=[], supportTickets=[];
 let patientCarePlan={goals:[],actions:[]}, patientCarePlanDoctorId=null, patientCarePlanSyncing=false;
 let patientNutritionPlan={plan:null,items:[]}, patientNutritionCatalog=[], patientNutritionDay=null;
@@ -1025,6 +1029,7 @@ function portalTabs(){
   const available=[
     ['PATIENT','Mi seguimiento'],
     ['DOCTOR','Médico'],
+    ['ASSISTANT','Asistente'],
     ['ADMIN','Administración']
   ].filter(([role])=>hasRole(role));
   if(available.length<=1)return '';
@@ -1061,7 +1066,7 @@ function suspendedView(){
 }
 
 function roleBadge(role){
-  const labels={PATIENT:'Paciente',DOCTOR:'Médico',ADMIN:'Admin'};
+  const labels={PATIENT:'Paciente',DOCTOR:'Médico',ASSISTANT:'Asistente',ADMIN:'Admin'};
   return `<span class="role-badge role-${role.toLowerCase()}">${labels[role]||role}</span>`;
 }
 
@@ -1418,6 +1423,10 @@ function notificationIcon(type){
     CARE_PLAN_UPDATED:'🎯',
     CARE_ACTION_UPDATED:'✅',
     NUTRITION_PLAN_UPDATED:'🥗',
+    ASSISTANT_TASK_ASSIGNED:'📌',
+    ASSISTANT_ESCALATION:'🚨',
+    ASSISTANT_ESCALATION_RESOLVED:'✅',
+    ASSISTANT_PATIENT_ASSIGNED:'👥',
     CLINICAL_ALERT:'🔴',
     WEIGHT_UPDATED:'✏️',
     WEIGHT_REMOVED:'🗑️'
@@ -1543,6 +1552,10 @@ function notificationDestinationLabel(n){
     CARE_PLAN_UPDATED:'Ver mi plan',
     CARE_ACTION_UPDATED:'Ver mi plan',
     NUTRITION_PLAN_UPDATED:'Ver nutrición',
+    ASSISTANT_TASK_ASSIGNED:'Abrir gestión',
+    ASSISTANT_ESCALATION:'Revisar escalación',
+    ASSISTANT_ESCALATION_RESOLVED:'Ver paciente',
+    ASSISTANT_PATIENT_ASSIGNED:'Abrir paciente',
     CLINICAL_ALERT:'Revisar paciente',
     WEIGHT_UPDATED:'Ver seguimiento',
     WEIGHT_REMOVED:'Ver seguimiento'
@@ -1730,6 +1743,25 @@ async function openNotificationById(id){
       await openDoctorPatient(n.related_user_id);
     }else{
       doctorPatientDetail=null;
+      await loadData();render();
+    }
+    return;
+  }
+
+  if(['ASSISTANT_TASK_ASSIGNED','ASSISTANT_PATIENT_ASSIGNED','ASSISTANT_ESCALATION_RESOLVED'].includes(n.type)&&hasRole('ASSISTANT')){
+    activePortal='ASSISTANT';localStorage.setItem('pesocare_active_portal','ASSISTANT');
+    await loadData();
+    if(n.related_user_id)await openAssistantPatient(n.related_user_id);
+    else render();
+    return;
+  }
+
+  if(n.type==='ASSISTANT_ESCALATION'&&hasRole('DOCTOR')){
+    activePortal='DOCTOR';localStorage.setItem('pesocare_active_portal','DOCTOR');
+    if(n.related_user_id){
+      await openDoctorPatient(n.related_user_id);
+      setTimeout(()=>document.getElementById('doctorPatientAssistantSection')?.scrollIntoView({behavior:'smooth',block:'start'}),120);
+    }else{
       await loadData();render();
     }
     return;
@@ -1962,6 +1994,16 @@ async function handleRealtimeNotification(n,fromFallback=false){
     if(n.type==='NEW_PATIENT'&&hasRole('DOCTOR')&&activePortal==='DOCTOR'&&!userIsTyping()){
       await loadData();render();
       if(!doctorPatientDetail)syncDoctorHomeData();
+    }
+
+    if(['ASSISTANT_TASK_ASSIGNED','ASSISTANT_PATIENT_ASSIGNED','ASSISTANT_ESCALATION_RESOLVED'].includes(n.type)&&hasRole('ASSISTANT')){
+      await syncAssistantDashboard(false);
+      if(assistantPatientDetail?.patient?.user_id===n.related_user_id)await syncAssistantPatient(true);
+      else if(activePortal==='ASSISTANT'&&!assistantPatientDetail&&!userIsTyping())renderAssistantQueueOnly();
+    }
+
+    if(n.type==='ASSISTANT_ESCALATION'&&hasRole('DOCTOR')){
+      await syncDoctorAssistantOps(true);
     }
 
     if(n.type==='SUPPORT'&&hasRole('ADMIN')){
@@ -2264,6 +2306,9 @@ async function maybeOfferPasskeyEnrollment(){
   const available=await platformAuthenticatorAvailable();
   if(!available)return;
 
+  const backend=await getPasskeyBackendState();
+  if(!backend.enabled)return;
+
   document.getElementById('passkeyEnrollmentOverlay')?.remove();
   document.body.insertAdjacentHTML('beforeend',`
     <div class="passkey-overlay" id="passkeyEnrollmentOverlay">
@@ -2302,32 +2347,96 @@ function passkeyDate(value){
   if(!value)return 'Nunca';
   try{return new Date(value).toLocaleString('es-CL',{dateStyle:'medium',timeStyle:'short'})}catch{return value}
 }
+
+async function getPasskeyBackendState(){
+  if(!session?.access_token)return {enabled:false,reason:'NO_SESSION',message:'Inicia sesión para administrar biometría.'};
+  try{
+    const keys=await listPasskeys();
+    return {enabled:true,keys:Array.isArray(keys)?keys:[]};
+  }catch(err){
+    const raw=String(err?.message||err||'');
+    const code=String(err?.data?.code||err?.data?.error_code||'');
+    if(/passkeys are disabled/i.test(raw)||/passkey_disabled/i.test(raw)||code==='passkey_disabled'){
+      return {enabled:false,reason:'DISABLED',message:'La biometría todavía no está activada en Supabase para BodyCare.'};
+    }
+    return {enabled:false,reason:'ERROR',message:passkeyFriendlyError(err)};
+  }
+}
+
+function passkeyDisabledCardMarkup(message){
+  return `<div class="passkey-disabled-card">
+    <div class="passkey-disabled-icon">🔒</div>
+    <div>
+      <strong>Biometría pendiente de activación</strong>
+      <span>${esc(message||'La función Passkeys todavía no está habilitada en Supabase.')}</span>
+      <small>El acceso normal con correo y contraseña sigue funcionando sin cambios.</small>
+    </div>
+  </div>`;
+}
+
 async function securityCenterMarkup(){
   const supported=passkeyClientSupported();
-  let keys=[];
-  let loadError='';
-  if(supported){
-    try{keys=await listPasskeys()}catch(err){loadError=passkeyFriendlyError(err)}
+
+  if(!supported){
+    return `<div class="security-center-content">
+      <div class="security-summary unsupported">
+        <div class="security-lock-icon">🔐</div>
+        <div>
+          <strong>Acceso biométrico / Passkey</strong>
+          <span>Este navegador no admite WebAuthn.</span>
+        </div>
+      </div>
+      <div class="security-help">Puedes seguir usando BodyCare normalmente con correo y contraseña.</div>
+    </div>`;
   }
+
+  const backend=await getPasskeyBackendState();
+
+  if(!backend.enabled){
+    return `<div class="security-center-content">
+      <div class="security-summary supported">
+        <div class="security-lock-icon">🔐</div>
+        <div>
+          <strong>Acceso biométrico / Passkey</strong>
+          <span>Este dispositivo admite Face ID, huella o seguridad del sistema.</span>
+        </div>
+      </div>
+      ${passkeyDisabledCardMarkup(backend.message)}
+      <button type="button" class="primary security-disabled-action" disabled>Agregar este dispositivo</button>
+      <div class="security-help">La función quedará disponible apenas se active Passkeys en Supabase Auth. No necesitas volver a instalar BodyCare ni cambiar tu contraseña.</div>
+    </div>`;
+  }
+
+  const keys=backend.keys||[];
+
   return `<div class="security-center-content">
-    <div class="security-summary ${supported?'supported':'unsupported'}">
+    <div class="security-summary supported">
       <div class="security-lock-icon">🔐</div>
-      <div><strong>Acceso biométrico / Passkey</strong><span>${supported?'Este dispositivo admite acceso seguro sin contraseña.':'Este navegador no admite WebAuthn.'}</span></div>
+      <div>
+        <strong>Acceso biométrico / Passkey</strong>
+        <span>Este dispositivo admite acceso seguro sin contraseña.</span>
+      </div>
     </div>
-    ${loadError?`<div class="notice warning">${esc(loadError)}</div>`:''}
-    ${supported?`<button type="button" class="primary" id="securityAddPasskey">Agregar este dispositivo</button>`:''}
+
+    <button type="button" class="primary security-add-passkey" id="securityAddPasskey">Agregar este dispositivo</button>
+
     <div class="security-key-list">
       ${keys.length?keys.map(k=>`<div class="security-key-row">
-        <div><strong>${esc(k.friendly_name||'Passkey')}</strong><span>Creada ${passkeyDate(k.created_at)}${k.last_used_at?` · último uso ${passkeyDate(k.last_used_at)}`:''}</span></div>
+        <div>
+          <strong>${esc(k.friendly_name||'Passkey')}</strong>
+          <span>Creada ${passkeyDate(k.created_at)}${k.last_used_at?` · último uso ${passkeyDate(k.last_used_at)}`:''}</span>
+        </div>
         <div class="security-key-actions">
           <button type="button" class="secondary small-btn" data-rename-passkey="${k.id}" data-passkey-name="${esc(k.friendly_name||'Passkey')}">Renombrar</button>
           <button type="button" class="danger-btn small-btn" data-delete-passkey="${k.id}">Eliminar</button>
         </div>
-      </div>`).join(''):'<div class="empty-state">No hay passkeys registradas en esta cuenta.</div>'}
+      </div>`).join(''):'<div class="empty-state">Aún no hay dispositivos biométricos registrados en esta cuenta.</div>'}
     </div>
+
     <div class="security-help">La contraseña se mantiene como método de recuperación. BodyCare no recibe ni almacena tu huella, rostro o PIN.</div>
   </div>`;
 }
+
 async function renderSecurityCenter(){
   const body=document.getElementById('securityCenterBody');
   if(!body)return;
@@ -2358,12 +2467,23 @@ async function deletePasskey(id){
 }
 function bindSecurityCenterActions(){
   document.getElementById('securityAddPasskey')?.addEventListener('click',async()=>{
-    const btn=document.getElementById('securityAddPasskey');if(btn)btn.disabled=true;
+    const btn=document.getElementById('securityAddPasskey');
+    if(btn)btn.disabled=true;
     try{
       await registerBodyCarePasskey();
       await renderSecurityCenter();
       showToast('Acceso agregado','La passkey quedó registrada correctamente.','PUSH_TEST');
-    }catch(err){alert(passkeyFriendlyError(err));if(btn)btn.disabled=false}
+    }catch(err){
+      const message=passkeyFriendlyError(err);
+      const raw=String(err?.message||err||'');
+      if(/passkeys are disabled/i.test(raw)||/passkey_disabled/i.test(raw)){
+        await renderSecurityCenter();
+      }else{
+        const body=document.getElementById('securityCenterBody');
+        if(body)body.insertAdjacentHTML('afterbegin',`<div class="notice warning security-inline-error">${esc(message)}</div>`);
+        if(btn)btn.disabled=false;
+      }
+    }
   });
   document.querySelectorAll('[data-rename-passkey]').forEach(btn=>btn.addEventListener('click',()=>renamePasskey(btn.dataset.renamePasskey,btn.dataset.passkeyName)));
   document.querySelectorAll('[data-delete-passkey]').forEach(btn=>btn.addEventListener('click',()=>deletePasskey(btn.dataset.deletePasskey)));
@@ -2553,6 +2673,7 @@ async function loadData(){
   if(storedPortal&&roles.includes(storedPortal))activePortal=storedPortal;
   else if(roles.includes('PATIENT'))activePortal='PATIENT';
   else if(roles.includes('DOCTOR'))activePortal='DOCTOR';
+  else if(roles.includes('ASSISTANT'))activePortal='ASSISTANT';
   else if(roles.includes('ADMIN'))activePortal='ADMIN';
 
   profile=null;records=[];careLinks=[];linkedDoctorProfiles=[];
@@ -2560,6 +2681,9 @@ async function loadData(){
   patientCarePlan={goals:[],actions:[]};patientCarePlanDoctorId=null;
   patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;
   doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];
+  patientContactDetails={phone:null,whatsapp_phone:null,preferred_channel:'APP',contact_window:null};
+  assistantProfile=null;assistantDashboard=[];assistantPatientDetail=null;
+  doctorAssistantOps={assistants:[],assignments:[],escalations:[]};availableAssistants=[];
 
   if(account?.status!=='ACTIVE')return;
 
@@ -2578,6 +2702,11 @@ async function loadData(){
       patientPrescriptions=(await dbGet(`prescription_drafts?select=*&patient_user_id=eq.${encodeURIComponent(currentUser.id)}&status=eq.SHARED&deleted_at=is.null&order=created_at.desc`)||[]).filter(p=>!p.deleted_at);
     }
     supportTickets=await dbGet(`support_tickets?select=*&user_id=eq.${encodeURIComponent(currentUser.id)}&order=created_at.desc`)||[];
+    try{
+      const contact=await dbRpc('bodycare_get_my_contact_details',{});
+      patientContactDetails=Array.isArray(contact)?contact[0]||patientContactDetails:contact||patientContactDetails;
+    }catch(err){console.warn('Patient contact details unavailable',err)}
+
     try{
       const pref=await dbRpc('bodycare_get_reminder_preferences',{});
       const savedPref=Array.isArray(pref)?pref[0]||null:pref;
@@ -2628,6 +2757,26 @@ async function loadData(){
       console.warn('Doctor outcomes unavailable',err);
       doctorOutcomes=[];
     }
+
+    try{
+      doctorAssistantOps=await dbRpc('bodycare_get_doctor_assistant_ops',{})||{assistants:[],assignments:[],escalations:[]};
+      availableAssistants=await dbRpc('bodycare_get_available_assistants',{})||[];
+    }catch(err){
+      console.warn('Doctor remote-care team unavailable',err);
+      doctorAssistantOps={assistants:[],assignments:[],escalations:[]};
+      availableAssistants=[];
+    }
+  }
+
+  if(hasRole('ASSISTANT')){
+    try{
+      const ap=await dbRpc('bodycare_get_assistant_profile',{});
+      assistantProfile=Array.isArray(ap)?ap[0]||null:ap;
+      assistantDashboard=await dbRpc('bodycare_get_assistant_dashboard',{})||[];
+    }catch(err){
+      console.warn('Assistant remote-care data unavailable',err);
+      assistantDashboard=[];
+    }
   }
 }
 
@@ -2637,6 +2786,8 @@ function render(){
   else if(activePortal==='ADMIN'&&hasRole('ADMIN'))result=adminView();
   else if(activePortal==='DOCTOR'&&hasRole('DOCTOR')){
     result=doctorPatientDetail?doctorPatientDetailView():doctorView();
+  }else if(activePortal==='ASSISTANT'&&hasRole('ASSISTANT')){
+    result=assistantPatientDetail?assistantPatientView():assistantView();
   }else if(!profile){
     result=initialProfileView();
   }else if(activePatientTab==='PLAN'){
@@ -2657,7 +2808,7 @@ function render(){
 }
 
 function header(){
-  const display=doctorProfile?.display_name||profile?.full_name||account?.display_name||currentUser?.email||'';
+  const display=assistantProfile?.display_name||doctorProfile?.display_name||profile?.full_name||account?.display_name||currentUser?.email||'';
   const count=unreadCount();
   return `<div class="top">
     <div class="brandrow">
@@ -2839,6 +2990,8 @@ async function syncVisibleContext(){
     else if(activePortal==='PATIENT'&&activePatientTab==='SUPPORT')await syncSupportTickets();
     else if(activePortal==='DOCTOR'&&doctorPatientDetail?.profile?.user_id)await syncDoctorMedicalData(doctorPatientDetail.profile.user_id);
     else if(activePortal==='DOCTOR'&&!doctorPatientDetail)await syncDoctorHomeData();
+    else if(activePortal==='ASSISTANT'&&assistantPatientDetail?.patient?.user_id)await syncAssistantPatient(true);
+    else if(activePortal==='ASSISTANT'&&!assistantPatientDetail)await syncAssistantDashboard(true);
   }catch(err){console.warn('Context sync failed',err)}
 }
 
@@ -2865,6 +3018,12 @@ function startContextSync(){
   }else if(activePortal==='DOCTOR'&&!doctorPatientDetail){
     syncDoctorHomeData();
     contextSyncTimer=setInterval(()=>syncDoctorHomeData(),15000);
+  }else if(activePortal==='ASSISTANT'&&assistantPatientDetail?.patient?.user_id){
+    syncAssistantPatient(false);
+    contextSyncTimer=setInterval(()=>syncAssistantPatient(true),10000);
+  }else if(activePortal==='ASSISTANT'&&!assistantPatientDetail){
+    syncAssistantDashboard(true);
+    contextSyncTimer=setInterval(()=>syncAssistantDashboard(true),15000);
   }
 }
 
@@ -3535,6 +3694,41 @@ function patientPlanView(){
   setTimeout(()=>syncPatientCarePlan(true),0);
 }
 
+
+function contactChannelLabel(value){
+  return ({CALL:'Llamada',WHATSAPP:'WhatsApp',EMAIL:'Correo',APP:'BodyCare'})[value]||'BodyCare';
+}
+function patientContactCardMarkup(){
+  const c=patientContactDetails||{};
+  return `<section class="card" id="patientContactCard">
+    <div class="card-head">
+      <div><h2 class="section-title">Contactabilidad</h2><div class="muted">Estos datos pueden ser vistos por el médico y por asistentes asignados para tu gestión remota.</div></div>
+      <span class="integration-badge">Privado</span>
+    </div>
+    <form id="patientContactForm">
+      <div class="grid remote-contact-grid">
+        <div><label for="patientPhone">Teléfono</label><input id="patientPhone" type="tel" value="${esc(c.phone||'')}" placeholder="+56 9 1234 5678"></div>
+        <div><label for="patientWhatsApp">WhatsApp</label><input id="patientWhatsApp" type="tel" value="${esc(c.whatsapp_phone||'')}" placeholder="+56 9 1234 5678"></div>
+        <div><label for="patientPreferredChannel">Canal preferido</label><select id="patientPreferredChannel">${['APP','WHATSAPP','CALL','EMAIL'].map(v=>`<option value="${v}" ${c.preferred_channel===v?'selected':''}>${contactChannelLabel(v)}</option>`).join('')}</select></div>
+        <div><label for="patientContactWindow">Horario preferido</label><input id="patientContactWindow" value="${esc(c.contact_window||'')}" placeholder="Ej: 18:00–20:00"></div>
+      </div>
+      <button type="submit" class="secondary" style="margin-top:10px">Guardar contacto</button>
+    </form>
+  </section>`;
+}
+async function savePatientContactDetails(e){
+  e.preventDefault();
+  try{
+    const rows=await dbRpc('bodycare_save_my_contact_details',{
+      p_phone:document.getElementById('patientPhone')?.value.trim()||null,
+      p_whatsapp_phone:document.getElementById('patientWhatsApp')?.value.trim()||null,
+      p_preferred_channel:document.getElementById('patientPreferredChannel')?.value||'APP',
+      p_contact_window:document.getElementById('patientContactWindow')?.value.trim()||null
+    });
+    patientContactDetails=Array.isArray(rows)?rows[0]||patientContactDetails:rows||patientContactDetails;
+    showToast('Contacto actualizado','Tu información de contactabilidad quedó guardada.','PUSH_TEST');
+  }catch(err){alert('No fue posible guardar los datos de contacto: '+err.message)}
+}
 function patientDoctorView(){
   const selectedStored=localStorage.getItem('pesocare_selected_doctor');
   const selectedDoctor=linkedDoctorProfiles.some(d=>d.user_id===selectedStored)?selectedStored:(linkedDoctorProfiles[0]?.user_id||'');
@@ -3569,6 +3763,8 @@ function patientDoctorView(){
       </form>
       <p id="doctorLinkMsg" class="error"></p>
     </section>
+
+    ${patientContactCardMarkup()}
 
     ${patientReminderCardMarkup()}
 
@@ -3639,6 +3835,7 @@ function patientDoctorView(){
   bindCommonHeader();
   bindPatientSubTabs();
   bindPatientCare();
+  document.getElementById('patientContactForm')?.addEventListener('submit',savePatientContactDetails);
   bindPatientReminderPreferences();
   setTimeout(()=>syncPatientReminderPlan(false),0);
   renderPatientPrescriptionList();
@@ -4719,7 +4916,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v24.1'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v25.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -5505,7 +5702,8 @@ async function syncDoctorHomeData(){
   await Promise.allSettled([
     syncDoctorAgenda(false),
     syncDoctorPriorities(false),
-    syncDoctorOutcomes(false)
+    syncDoctorOutcomes(false),
+    syncDoctorAssistantOps(false)
   ]);
   if(activePortal==='DOCTOR'&&!doctorPatientDetail&&!userIsTyping()){
     renderDoctorAgenda();
@@ -5724,6 +5922,409 @@ async function saveDoctorProfile(e){
   }catch(err){alert(err.message)}
 }
 
+
+function doctorRemoteAssistantAssigned(patientId,assistantId){
+  return (doctorAssistantOps?.assignments||[]).some(a=>a.patient_user_id===patientId&&a.assistant_user_id===assistantId);
+}
+function doctorRemoteOpsMarkup(){
+  const linked=doctorAssistantOps?.assistants||[];
+  const escalations=doctorAssistantOps?.escalations||[];
+  const unlinked=(availableAssistants||[]).filter(a=>!a.linked);
+
+  return `<section class="card doctor-remote-ops-card" id="doctorRemoteOpsSection">
+    <div class="card-head">
+      <div><h2 class="section-title">Equipo de gestión remota</h2><div class="muted">Asigna asistentes, revisa carga operacional y recibe escalaciones.</div></div>
+      <span class="remote-ops-chip">${linked.length} asistente${linked.length===1?'':'s'}</span>
+    </div>
+
+    ${unlinked.length?`<div class="remote-team-add">
+      <select id="doctorAddAssistantSelect">${unlinked.map(a=>`<option value="${a.assistant_user_id}">${esc(a.display_name||'Asistente')}${a.job_title?` · ${esc(a.job_title)}`:''}</option>`).join('')}</select>
+      <button type="button" class="secondary small-btn" id="doctorAddAssistantBtn">Agregar al equipo</button>
+    </div>`:''}
+
+    <div class="remote-team-list">
+      ${linked.length?linked.map(a=>`<div class="remote-team-row">
+        <div><strong>${esc(a.display_name||'Asistente')}</strong><span>${esc(a.job_title||'Gestión remota')} · ${Number(a.patient_count||0)} pacientes</span></div>
+        <div class="remote-team-stats"><span>${Number(a.open_tasks||0)} pendientes</span><span class="${Number(a.escalated_tasks||0)?'danger-text':''}">${Number(a.escalated_tasks||0)} escaladas</span></div>
+        <button type="button" class="link-danger small-btn" data-unlink-assistant="${a.assistant_user_id}">Quitar</button>
+      </div>`).join(''):'<div class="empty-state">Aún no tienes asistentes vinculados. Créalo primero desde Administración con rol Asistente.</div>'}
+    </div>
+
+    <div class="remote-escalation-block">
+      <div class="care-block-head"><h3>Escalaciones pendientes</h3><span>${escalations.length}</span></div>
+      ${escalations.length?escalations.map(e=>`<div class="remote-escalation-row">
+        <div><strong>${esc(e.patient_name||'Paciente')}</strong><span>${esc(e.assistant_name||'Asistente')} · ${formatDateTime(e.escalated_at||e.updated_at)}</span><p>${esc(e.detail||e.title||'Revisión requerida')}</p></div>
+        <div class="remote-escalation-actions"><button type="button" class="secondary small-btn" data-open-remote-patient="${e.patient_user_id}">Abrir paciente</button><button type="button" class="primary small-btn" data-resolve-escalation="${e.task_id}">Marcar revisada</button></div>
+      </div>`).join(''):'<div class="empty-state compact">Sin escalaciones pendientes.</div>'}
+    </div>
+  </section>`;
+}
+function doctorPatientAssistantAssignmentMarkup(patientId){
+  const linked=doctorAssistantOps?.assistants||[];
+  return `<section class="card doctor-patient-assistant-card" id="doctorPatientAssistantSection">
+    <div class="card-head"><div><h2 class="section-title">Gestión remota</h2><div class="muted">Define qué asistentes pueden realizar seguimiento operacional de este paciente.</div></div><span class="clinical-disclaimer">Sin permisos de indicación clínica</span></div>
+    ${linked.length?`<div class="assistant-assignment-list">${linked.map(a=>{
+      const assigned=doctorRemoteAssistantAssigned(patientId,a.assistant_user_id);
+      return `<div class="assistant-assignment-row"><div><strong>${esc(a.display_name||'Asistente')}</strong><span>${assigned?'Paciente asignado':'Sin acceso a este paciente'}</span></div><button type="button" class="${assigned?'secondary':'primary'} small-btn" data-toggle-assistant-patient="${a.assistant_user_id}" data-active="${assigned?'false':'true'}">${assigned?'Quitar asignación':'Asignar paciente'}</button></div>`;
+    }).join('')}</div>`:'<div class="empty-state">Vincula primero un asistente desde tu escritorio médico.</div>'}
+  </section>`;
+}
+async function syncDoctorAssistantOps(renderUI=true){
+  if(!hasRole('DOCTOR'))return;
+  try{
+    doctorAssistantOps=await dbRpc('bodycare_get_doctor_assistant_ops',{})||{assistants:[],assignments:[],escalations:[]};
+    availableAssistants=await dbRpc('bodycare_get_available_assistants',{})||[];
+    if(renderUI){
+      if(doctorPatientDetail)renderDoctorPatientAssistantSection();
+      else renderDoctorRemoteOps();
+    }
+  }catch(err){console.warn('Doctor assistant ops sync failed',err)}
+}
+function renderDoctorRemoteOps(){
+  const old=document.getElementById('doctorRemoteOpsSection');if(!old)return;
+  const temp=document.createElement('div');temp.innerHTML=doctorRemoteOpsMarkup().trim();const fresh=temp.firstElementChild;
+  if(fresh){old.replaceWith(fresh);bindDoctorRemoteOps()}
+}
+function renderDoctorPatientAssistantSection(){
+  const old=document.getElementById('doctorPatientAssistantSection');if(!old||!doctorPatientDetail)return;
+  const temp=document.createElement('div');temp.innerHTML=doctorPatientAssistantAssignmentMarkup(doctorPatientDetail.profile.user_id).trim();const fresh=temp.firstElementChild;
+  if(fresh){old.replaceWith(fresh);bindDoctorPatientAssistantOps()}
+}
+async function doctorLinkAssistant(assistantId,active){
+  try{
+    await dbRpc('bodycare_doctor_link_assistant',{p_assistant_user_id:assistantId,p_active:active});
+    await syncDoctorAssistantOps(true);
+    showToast(active?'Asistente vinculado':'Asistente desvinculado',active?'Ya puedes asignarle pacientes.':'Se revocaron sus asignaciones activas.','ASSISTANT_PATIENT_ASSIGNED');
+  }catch(err){alert('No fue posible actualizar el equipo: '+err.message)}
+}
+async function doctorAssignPatientAssistant(assistantId,active){
+  const patientId=doctorPatientDetail?.profile?.user_id;if(!patientId)return;
+  try{
+    await dbRpc('bodycare_doctor_assign_patient_assistant',{p_assistant_user_id:assistantId,p_patient_user_id:patientId,p_active:active});
+    await syncDoctorAssistantOps(true);
+  }catch(err){alert('No fue posible actualizar la asignación: '+err.message)}
+}
+async function doctorResolveEscalation(taskId){
+  const note=prompt('Nota de resolución para el asistente (opcional):','');
+  if(note===null)return;
+  try{
+    await dbRpc('bodycare_resolve_remote_escalation',{p_task_id:taskId,p_note:note.trim()||null});
+    await syncDoctorAssistantOps(true);
+  }catch(err){alert('No fue posible cerrar la escalación: '+err.message)}
+}
+function bindDoctorRemoteOps(){
+  document.getElementById('doctorAddAssistantBtn')?.addEventListener('click',()=>{
+    const id=document.getElementById('doctorAddAssistantSelect')?.value;if(id)doctorLinkAssistant(id,true);
+  });
+  document.querySelectorAll('[data-unlink-assistant]').forEach(btn=>btn.addEventListener('click',()=>{if(confirm('¿Quitar este asistente del equipo y revocar sus pacientes?'))doctorLinkAssistant(btn.dataset.unlinkAssistant,false)}));
+  document.querySelectorAll('[data-resolve-escalation]').forEach(btn=>btn.addEventListener('click',()=>doctorResolveEscalation(btn.dataset.resolveEscalation)));
+  document.querySelectorAll('[data-open-remote-patient]').forEach(btn=>btn.addEventListener('click',()=>openDoctorPatient(btn.dataset.openRemotePatient)));
+}
+function bindDoctorPatientAssistantOps(){
+  document.querySelectorAll('[data-toggle-assistant-patient]').forEach(btn=>btn.addEventListener('click',()=>doctorAssignPatientAssistant(btn.dataset.toggleAssistantPatient,btn.dataset.active==='true')));
+}
+
+const ASSISTANT_NOTIFICATION_TYPES=['ASSISTANT_TASK_ASSIGNED','ASSISTANT_ESCALATION_RESOLVED','ASSISTANT_PATIENT_ASSIGNED'];
+
+function assistantMobile(){
+  return window.matchMedia?.('(max-width:700px)').matches;
+}
+function assistantChileDate(ts){
+  if(!ts)return null;
+  try{
+    const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(ts)).reduce((a,p)=>(a[p.type]=p.value,a),{});
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  }catch{return null}
+}
+function assistantStatusLabel(status){
+  return ({ESCALATE:'Escalar',CONFIRM_CONTROL:'Confirmar control',FOLLOW_UP_RECORD:'Sin registro',TASK:'Gestión pendiente',NORMAL:'Al día'})[status]||status;
+}
+function assistantStatusClass(status){
+  return ({ESCALATE:'red',CONFIRM_CONTROL:'orange',FOLLOW_UP_RECORD:'orange',TASK:'blue',NORMAL:'green'})[status]||'blue';
+}
+function normalizePhoneLink(value){
+  return String(value||'').replace(/[^\d+]/g,'');
+}
+function normalizeWhatsApp(value){
+  return String(value||'').replace(/\D/g,'');
+}
+function assistantDashboardCounts(){
+  const rows=assistantDashboard||[];
+  return {
+    total:rows.length,
+    today:rows.filter(r=>assistantChileDate(r.next_control_at)===today()).length,
+    confirm:rows.filter(r=>r.operational_status==='CONFIRM_CONTROL').length,
+    record:rows.filter(r=>r.operational_status==='FOLLOW_UP_RECORD').length,
+    escalate:rows.filter(r=>r.operational_status==='ESCALATE').length,
+    tasks:rows.filter(r=>Number(r.open_tasks||0)>0).length
+  };
+}
+function assistantMatchesFilter(r){
+  if(assistantFilter==='TODAY'&&assistantChileDate(r.next_control_at)!==today())return false;
+  if(assistantFilter==='CONFIRM'&&r.operational_status!=='CONFIRM_CONTROL')return false;
+  if(assistantFilter==='RECORD'&&r.operational_status!=='FOLLOW_UP_RECORD')return false;
+  if(assistantFilter==='ESCALATE'&&r.operational_status!=='ESCALATE')return false;
+  if(assistantFilter==='TASK'&&Number(r.open_tasks||0)<=0)return false;
+  const q=String(assistantSearch||'').trim().toLocaleLowerCase('es-CL');
+  if(q&&!`${r.patient_name||''} ${r.doctor_name||''}`.toLocaleLowerCase('es-CL').includes(q))return false;
+  return true;
+}
+function assistantQuickContactMarkup(r){
+  const phone=normalizePhoneLink(r.phone);
+  const wa=normalizeWhatsApp(r.whatsapp_phone||r.phone);
+  return `<div class="assistant-quick-actions">
+    ${phone?`<a class="assistant-contact-btn call" href="tel:${phone}">☎ Llamar</a>`:''}
+    ${wa?`<a class="assistant-contact-btn whatsapp" href="https://wa.me/${wa}" target="_blank" rel="noopener">WhatsApp</a>`:''}
+    <button type="button" class="secondary small-btn" data-open-assistant-patient="${r.patient_user_id}">Abrir</button>
+  </div>`;
+}
+function assistantPatientCardMarkup(r){
+  return `<article class="assistant-patient-card status-${assistantStatusClass(r.operational_status)}">
+    <div class="assistant-patient-card-head">
+      <div><strong>${esc(r.patient_name||'Paciente')}</strong><span>${esc(r.doctor_name||'Médico')}</span></div>
+      <span class="assistant-status-chip ${assistantStatusClass(r.operational_status)}">${assistantStatusLabel(r.operational_status)}</span>
+    </div>
+    <div class="assistant-patient-facts">
+      <span><b>Último registro</b>${r.last_record_date?fmt(r.last_record_date):'Sin registros'}${r.days_since_record!==null&&r.days_since_record!==undefined?` · ${r.days_since_record} días`:''}</span>
+      <span><b>Próximo control</b>${r.next_control_at?formatControlDateTime(r.next_control_at):'Sin control'}</span>
+      <span><b>Nutrición hoy</b>${Number(r.nutrition_entries_today||0)} registros</span>
+      <span><b>Tareas</b>${Number(r.open_tasks||0)} abiertas${Number(r.escalated_tasks||0)?` · ${r.escalated_tasks} escaladas`:''}</span>
+    </div>
+    ${assistantQuickContactMarkup(r)}
+  </article>`;
+}
+function assistantQueueMarkup(){
+  const rows=(assistantDashboard||[]).filter(assistantMatchesFilter);
+  return rows.length?`<div class="assistant-queue">${rows.map(assistantPatientCardMarkup).join('')}</div>`:'<div class="empty-state">No hay pacientes que coincidan con este filtro.</div>';
+}
+function assistantSummaryMarkup(){
+  const c=assistantDashboardCounts();
+  return `<section class="assistant-summary-grid">
+    <div><span>Pacientes</span><strong>${c.total}</strong></div>
+    <div><span>Controles hoy</span><strong>${c.today}</strong></div>
+    <div><span>Confirmar</span><strong>${c.confirm}</strong></div>
+    <div><span>Sin registro</span><strong>${c.record}</strong></div>
+    <div><span>Escalar</span><strong>${c.escalate}</strong></div>
+    <div><span>Con tareas</span><strong>${c.tasks}</strong></div>
+  </section>`;
+}
+function assistantFiltersMarkup(){
+  const filters=[['ALL','Todos'],['TODAY','Hoy'],['CONFIRM','Confirmar'],['RECORD','Sin registro'],['ESCALATE','Escalar'],['TASK','Tareas']];
+  return `<div class="assistant-toolbar">
+    <div class="assistant-filter-scroll">${filters.map(([v,l])=>`<button type="button" class="assistant-filter-btn ${assistantFilter===v?'active':''}" data-assistant-filter="${v}">${l}</button>`).join('')}</div>
+    <input id="assistantSearch" type="search" placeholder="Buscar paciente" value="${esc(assistantSearch)}">
+  </div>`;
+}
+function assistantMobileNavMarkup(){
+  return `<nav class="assistant-mobile-nav">
+    <button type="button" data-assistant-mobile-filter="ALL" class="${assistantFilter==='ALL'?'active':''}"><span>⌂</span>Inicio</button>
+    <button type="button" data-assistant-mobile-filter="TODAY" class="${assistantFilter==='TODAY'?'active':''}"><span>🗓</span>Hoy</button>
+    <button type="button" data-assistant-mobile-filter="TASK" class="${assistantFilter==='TASK'?'active':''}"><span>☑</span>Pendientes</button>
+    <button type="button" id="assistantProfileBtnMobile"><span>👤</span>Perfil</button>
+  </nav>`;
+}
+function assistantView(){
+  app.innerHTML=shell(`${header()}
+    <section class="card assistant-hero">
+      <div><span class="assistant-eyebrow">BodyCare Remote</span><h2 class="section-title">Gestión remota</h2><div class="muted">Prioriza, contacta y documenta el seguimiento de pacientes asignados.</div></div>
+      <button type="button" class="secondary small-btn" id="assistantProfileBtn">Editar perfil</button>
+    </section>
+    ${assistantSummaryMarkup()}
+    <section class="card assistant-worklist-card">
+      <div class="card-head"><div><h2 class="section-title">Cola de trabajo</h2><div class="muted">Ordenada por escalaciones, confirmaciones y falta de registros.</div></div><span id="assistantSyncStatus" class="agenda-sync-status">Actualizado</span></div>
+      ${assistantFiltersMarkup()}
+      <div id="assistantQueue">${assistantQueueMarkup()}</div>
+    </section>
+    <section class="card assistant-permissions-note"><strong>Alcance del rol Asistente</strong><span>Puedes gestionar agenda, contactabilidad, adherencia operacional y escalaciones. No puedes modificar prescripciones, metas nutricionales, criterios clínicos ni cerrar alertas médicas.</span></section>
+    ${assistantMobileNavMarkup()}
+  `);
+  bindCommonHeader();bindAssistantView();
+}
+function bindAssistantView(){
+  document.querySelectorAll('[data-assistant-filter]').forEach(btn=>btn.addEventListener('click',()=>{assistantFilter=btn.dataset.assistantFilter;renderAssistantQueueOnly()}));
+  document.querySelectorAll('[data-assistant-mobile-filter]').forEach(btn=>btn.addEventListener('click',()=>{assistantFilter=btn.dataset.assistantMobileFilter;assistantView()}));
+  document.getElementById('assistantSearch')?.addEventListener('input',e=>{assistantSearch=e.target.value||'';renderAssistantQueueOnly()});
+  document.getElementById('assistantProfileBtn')?.addEventListener('click',editAssistantProfile);
+  document.getElementById('assistantProfileBtnMobile')?.addEventListener('click',editAssistantProfile);
+  bindAssistantPatientOpenButtons();
+}
+function renderAssistantQueueOnly(){
+  document.querySelectorAll('[data-assistant-filter]').forEach(btn=>btn.classList.toggle('active',btn.dataset.assistantFilter===assistantFilter));
+  const q=document.getElementById('assistantQueue');if(q){q.innerHTML=assistantQueueMarkup();bindAssistantPatientOpenButtons(q)}
+}
+function bindAssistantPatientOpenButtons(root=document){
+  root.querySelectorAll('[data-open-assistant-patient]').forEach(btn=>btn.addEventListener('click',()=>openAssistantPatient(btn.dataset.openAssistantPatient)));
+}
+async function editAssistantProfile(){
+  const name=prompt('Nombre del asistente:',assistantProfile?.display_name||account?.display_name||'');if(name===null)return;
+  const title=prompt('Cargo / función:',assistantProfile?.job_title||'Asistente de seguimiento');if(title===null)return;
+  const phone=prompt('Teléfono profesional:',assistantProfile?.professional_phone||'');if(phone===null)return;
+  try{
+    const rows=await dbRpc('bodycare_save_assistant_profile',{p_display_name:name.trim(),p_job_title:title.trim()||null,p_professional_phone:phone.trim()||null});
+    assistantProfile=Array.isArray(rows)?rows[0]||assistantProfile:rows||assistantProfile;assistantView();
+  }catch(err){alert('No fue posible guardar el perfil: '+err.message)}
+}
+async function syncAssistantDashboard(renderUI=true){
+  if(!hasRole('ASSISTANT')||assistantSyncing)return;
+  assistantSyncing=true;
+  const st=document.getElementById('assistantSyncStatus');if(st)st.textContent='Actualizando…';
+  try{
+    assistantDashboard=await dbRpc('bodycare_get_assistant_dashboard',{})||[];
+    if(renderUI&&!assistantPatientDetail&&!userIsTyping()){
+      const q=document.getElementById('assistantQueue');if(q){q.innerHTML=assistantQueueMarkup();bindAssistantPatientOpenButtons(q)}
+      const st2=document.getElementById('assistantSyncStatus');if(st2)st2.textContent='Actualizado';
+    }
+  }catch(err){console.warn('Assistant dashboard sync failed',err)}
+  finally{assistantSyncing=false}
+}
+async function openAssistantPatient(patientId){
+  try{
+    assistantPatientDetail=await dbRpc('bodycare_get_assistant_patient',{p_patient_user_id:patientId});
+    assistantPatientView();
+  }catch(err){alert('No fue posible abrir el paciente: '+err.message)}
+}
+function assistantDetailQuickActions(d){
+  const p=d?.patient||{},phone=normalizePhoneLink(p.phone),wa=normalizeWhatsApp(p.whatsapp_phone||p.phone);
+  return `<div class="assistant-detail-quick">
+    ${phone?`<a href="tel:${phone}" class="assistant-contact-btn call">☎ Llamar</a>`:''}
+    ${wa?`<a href="https://wa.me/${wa}" target="_blank" rel="noopener" class="assistant-contact-btn whatsapp">WhatsApp</a>`:''}
+    <button type="button" class="assistant-contact-btn escalate" id="assistantEscalateQuick">Escalar</button>
+  </div>`;
+}
+function assistantControlListMarkup(d){
+  const rows=[...(d?.controls||[])].sort((a,b)=>String(b.scheduled_at).localeCompare(String(a.scheduled_at)));
+  return rows.length?rows.map(c=>`<div class="assistant-control-row">
+    <div><strong>${formatControlDateTime(c.scheduled_at)}</strong><span>${controlStatusLabel(c.status)} · ${validControlSlotMinutes(c.slot_minutes||30)} min</span>${c.notes?`<small>${esc(c.notes)}</small>`:''}</div>
+    ${c.status==='SCHEDULED'?`<button type="button" class="primary small-btn" data-assistant-confirm-control="${c.id}">Confirmar por contacto</button>`:''}
+  </div>`).join(''):'<div class="empty-state compact">Sin controles recientes.</div>';
+}
+function assistantTaskListMarkup(d){
+  const rows=d?.tasks||[];
+  return rows.length?rows.map(t=>`<div class="assistant-task-row status-${String(t.status||'').toLowerCase()}">
+    <div><strong>${esc(t.title)}</strong><span>${esc(t.task_type||'GESTIÓN')} · ${t.due_at?formatDateTime(t.due_at):'Sin vencimiento'} · ${esc(t.status)}</span>${t.detail?`<small>${esc(t.detail)}</small>`:''}</div>
+    ${t.status==='OPEN'?`<button type="button" class="secondary small-btn" data-complete-assistant-task="${t.id}">Completar</button>`:''}
+  </div>`).join(''):'<div class="empty-state compact">Sin tareas registradas.</div>';
+}
+function assistantEventListMarkup(d){
+  const rows=d?.events||[];
+  return rows.length?rows.map(e=>`<div class="assistant-event-row"><span>${formatDateTime(e.created_at)}</span><div><strong>${esc(e.event_type.replaceAll('_',' '))}</strong>${e.note?`<p>${esc(e.note)}</p>`:''}</div></div>`).join(''):'<div class="empty-state compact">Aún no hay gestiones documentadas.</div>';
+}
+function assistantPatientView(){
+  const d=assistantPatientDetail;if(!d)return assistantView();
+  const p=d.patient||{},last=(d.recent_records||[])[0]||null,next=(d.controls||[]).filter(c=>['SCHEDULED','CONFIRMED'].includes(c.status)&&new Date(c.scheduled_at)>=new Date()).sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)))[0]||null;
+  app.innerHTML=shell(`${header()}
+    <section class="card assistant-detail-head">
+      <div><button type="button" class="linkbtn" id="backAssistantPatients">← Cola de trabajo</button><h2 class="section-title">${esc(p.full_name||'Paciente')}</h2><div class="muted">${esc(d.doctor?.display_name||'Médico')} · canal preferido ${contactChannelLabel(p.preferred_channel||'APP')}</div></div>
+      <span class="assistant-status-chip ${d.clinical_alert_summary?.requires_doctor_review?'red':'green'}">${d.clinical_alert_summary?.requires_doctor_review?'Revisión médica pendiente':'Gestión operacional'}</span>
+    </section>
+
+    ${assistantDetailQuickActions(d)}
+
+    <section class="assistant-detail-metrics">
+      <div><span>Último peso</span><strong>${last?kg(last.weight_kg):'—'}</strong><small>${last?fmt(last.measured_on):'Sin registro'}</small></div>
+      <div><span>Próximo control</span><strong>${next?formatControlDateTime(next.scheduled_at):'—'}</strong><small>${next?controlStatusLabel(next.status):'Sin agenda'}</small></div>
+      <div><span>Nutrición hoy</span><strong>${Number(d.nutrition_today?.entries||0)}</strong><small>${nutritionNum(d.nutrition_today?.kcal||0,0)} kcal registradas</small></div>
+      <div><span>Acciones del plan</span><strong>${(d.care_actions||[]).length}</strong><small>Pendientes / en progreso</small></div>
+    </section>
+
+    ${d.clinical_alert_summary?.requires_doctor_review?`<section class="card assistant-clinical-warning"><strong>Revisión médica requerida</strong><span>Existe al menos una alerta clínica abierta. El asistente puede escalar y documentar contacto, pero no puede cerrar ni modificar la alerta.</span></section>`:''}
+
+    <section class="card">
+      <h2 class="section-title">Contactabilidad</h2>
+      <div class="assistant-contact-details"><div><span>Teléfono</span><strong>${esc(p.phone||'No informado')}</strong></div><div><span>WhatsApp</span><strong>${esc(p.whatsapp_phone||'No informado')}</strong></div><div><span>Correo</span><strong>${esc(p.email||'—')}</strong></div><div><span>Horario preferido</span><strong>${esc(p.contact_window||'No informado')}</strong></div></div>
+    </section>
+
+    <section class="card"><h2 class="section-title">Controles</h2><div id="assistantControlList">${assistantControlListMarkup(d)}</div></section>
+
+    <section class="card">
+      <h2 class="section-title">Registrar gestión</h2>
+      <form id="assistantContactLogForm">
+        <div class="grid remote-event-grid">
+          <div><label>Resultado</label><select id="assistantEventType"><option value="CONTACT_SUCCESS">Contacto exitoso</option><option value="CONTACT_ATTEMPT">Intento sin contacto</option><option value="NOTE">Nota de seguimiento</option></select></div>
+          <div><label>Canal</label><select id="assistantEventChannel"><option value="CALL">Llamada</option><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">Correo</option><option value="APP">BodyCare</option></select></div>
+        </div>
+        <label style="margin-top:8px">Nota</label><textarea id="assistantEventNote" rows="3" maxlength="1500" placeholder="Resultado del contacto o gestión realizada"></textarea>
+        <button type="submit" class="secondary" style="margin-top:8px">Guardar gestión</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><div><h2 class="section-title">Tareas</h2><div class="muted">Pendientes de seguimiento remoto.</div></div></div>
+      <div id="assistantTaskList">${assistantTaskListMarkup(d)}</div>
+      <details class="care-editor-panel"><summary>Crear nueva tarea</summary>
+        <form id="assistantTaskForm" class="care-editor-form">
+          <div class="grid remote-task-grid">
+            <div><label>Tipo</label><select id="assistantTaskType"><option value="CONTACT">Contacto</option><option value="CONTROL_CONFIRMATION">Confirmar control</option><option value="RECORD_FOLLOWUP">Seguimiento de registro</option><option value="NUTRITION_FOLLOWUP">Seguimiento nutricional</option><option value="CARE_PLAN_FOLLOWUP">Seguimiento de plan</option><option value="GENERAL">General</option></select></div>
+            <div><label>Prioridad</label><select id="assistantTaskPriority"><option value="NORMAL">Normal</option><option value="HIGH">Alta</option><option value="LOW">Baja</option></select></div>
+          </div>
+          <label>Título</label><input id="assistantTaskTitle" maxlength="180" required>
+          <label>Detalle</label><textarea id="assistantTaskDetail" rows="2" maxlength="1500"></textarea>
+          <button type="submit" class="secondary">Crear tarea</button>
+        </form>
+      </details>
+    </section>
+
+    <section class="card assistant-escalate-card">
+      <h2 class="section-title">Escalar al médico</h2>
+      <form id="assistantEscalationForm"><label>Motivo / información relevante</label><textarea id="assistantEscalationNote" rows="3" maxlength="2000" required></textarea><div class="form-actions"><select id="assistantEscalationPriority"><option value="HIGH">Prioridad alta</option><option value="NORMAL">Prioridad normal</option></select><button type="submit" class="danger-btn">Enviar escalación</button></div></form>
+    </section>
+
+    <section class="card"><h2 class="section-title">Bitácora de gestión</h2><div id="assistantEventHistory">${assistantEventListMarkup(d)}</div></section>
+
+    ${assistantMobile()?`<div class="assistant-mobile-patient-actions">${assistantDetailQuickActions(d)}</div>`:''}
+  `);
+  bindCommonHeader();bindAssistantPatientView();
+}
+function bindAssistantPatientView(){
+  document.getElementById('backAssistantPatients')?.addEventListener('click',()=>{assistantPatientDetail=null;assistantView()});
+  document.getElementById('assistantContactLogForm')?.addEventListener('submit',saveAssistantContactEvent);
+  document.getElementById('assistantTaskForm')?.addEventListener('submit',saveAssistantTask);
+  document.getElementById('assistantEscalationForm')?.addEventListener('submit',submitAssistantEscalation);
+  document.getElementById('assistantEscalateQuick')?.addEventListener('click',()=>document.getElementById('assistantEscalationNote')?.scrollIntoView({behavior:'smooth',block:'center'}));
+  document.querySelectorAll('[data-assistant-confirm-control]').forEach(btn=>btn.addEventListener('click',()=>assistantConfirmControl(btn.dataset.assistantConfirmControl)));
+  document.querySelectorAll('[data-complete-assistant-task]').forEach(btn=>btn.addEventListener('click',()=>completeAssistantTask(btn.dataset.completeAssistantTask)));
+}
+async function syncAssistantPatient(renderUI=true){
+  const patientId=assistantPatientDetail?.patient?.user_id;if(!patientId)return;
+  try{
+    const data=await dbRpc('bodycare_get_assistant_patient',{p_patient_user_id:patientId});
+    assistantPatientDetail=data;
+    if(renderUI&&!userIsTyping())assistantPatientView();
+  }catch(err){console.warn('Assistant patient sync failed',err)}
+}
+async function saveAssistantContactEvent(e){
+  e.preventDefault();const p=assistantPatientDetail?.patient;if(!p)return;
+  try{
+    await dbRpc('bodycare_log_remote_care_event',{p_patient_user_id:p.user_id,p_task_id:null,p_event_type:document.getElementById('assistantEventType').value,p_channel:document.getElementById('assistantEventChannel').value,p_note:document.getElementById('assistantEventNote').value.trim()||null});
+    await syncAssistantPatient(false);assistantPatientView();showToast('Gestión registrada','La bitácora quedó actualizada.','ASSISTANT_TASK_ASSIGNED');
+  }catch(err){alert('No fue posible registrar la gestión: '+err.message)}
+}
+async function saveAssistantTask(e){
+  e.preventDefault();const p=assistantPatientDetail?.patient;if(!p)return;
+  try{
+    await dbRpc('bodycare_save_remote_task',{p_task_id:null,p_assistant_user_id:currentUser.id,p_patient_user_id:p.user_id,p_task_type:document.getElementById('assistantTaskType').value,p_title:document.getElementById('assistantTaskTitle').value.trim(),p_detail:document.getElementById('assistantTaskDetail').value.trim()||null,p_due_at:null,p_priority:document.getElementById('assistantTaskPriority').value});
+    await Promise.all([syncAssistantPatient(false),syncAssistantDashboard(false)]);assistantPatientView();
+  }catch(err){alert('No fue posible crear la tarea: '+err.message)}
+}
+async function submitAssistantEscalation(e){
+  e.preventDefault();const p=assistantPatientDetail?.patient;if(!p)return;
+  try{
+    await dbRpc('bodycare_escalate_to_doctor',{p_patient_user_id:p.user_id,p_note:document.getElementById('assistantEscalationNote').value.trim(),p_priority:document.getElementById('assistantEscalationPriority').value});
+    await Promise.all([syncAssistantPatient(false),syncAssistantDashboard(false)]);assistantPatientView();showToast('Escalación enviada','El médico recibió la alerta de gestión remota.','ASSISTANT_ESCALATION');
+  }catch(err){alert('No fue posible escalar: '+err.message)}
+}
+async function assistantConfirmControl(id){
+  const note=prompt('Nota de confirmación (opcional):','Paciente contactado y confirma asistencia.');
+  if(note===null)return;
+  try{await dbRpc('bodycare_assistant_confirm_control',{p_control_id:id,p_note:note.trim()||null});await syncAssistantPatient(false);assistantPatientView()}
+  catch(err){alert('No fue posible confirmar el control: '+err.message)}
+}
+async function completeAssistantTask(id){
+  const note=prompt('Nota de cierre (opcional):','');
+  if(note===null)return;
+  try{await dbRpc('bodycare_complete_remote_task',{p_task_id:id,p_note:note.trim()||null});await Promise.all([syncAssistantPatient(false),syncAssistantDashboard(false)]);assistantPatientView()}
+  catch(err){alert('No fue posible completar la tarea: '+err.message)}
+}
 function doctorView(){
   const counts=doctorPriorityCounts();
   const settings=alertSettingsValues();
@@ -5765,6 +6366,8 @@ function doctorView(){
           <button type="button" id="saveDoctorSlotMinutes" class="secondary small-btn">Guardar agenda</button>
         </div>
       </section>
+
+      ${doctorRemoteOpsMarkup()}
 
       <section class="card doctor-agenda-card">
         <div class="card-head">
@@ -5849,6 +6452,7 @@ function doctorView(){
   document.getElementById('doctorProfileForm')?.addEventListener('submit',saveDoctorProfile);
   document.getElementById('doctorAlertSettingsForm')?.addEventListener('submit',saveDoctorAlertSettings);
   bindDoctorOutcomes();
+  bindDoctorRemoteOps();
 
   document.querySelectorAll('[data-agenda-mode]').forEach(btn=>btn.addEventListener('click',()=>{
     doctorAgendaMode=btn.dataset.agendaMode==='WEEK'?'WEEK':'TODAY';
@@ -6404,6 +7008,7 @@ function doctorPatientDetailView(){
       <div class="metric"><span>Peso meta</span><strong>${p.target_weight_kg?kg(p.target_weight_kg):'—'}</strong></div>
       <div class="metric"><span>Cintura actual</span><strong>${waist?cm(waist.abdominal_circumference_cm):'—'}</strong></div>
     </section>
+    ${doctorPatientAssistantAssignmentMarkup(p.user_id)}
     ${doctorCarePlanSectionMarkup()}
     <section class="card"><h2 class="section-title">Evolución de peso</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'weight_kg',p.target_weight_kg?Number(p.target_weight_kg):null,'Peso (kg)','kg')}</div></section>
     <section class="card"><h2 class="section-title">Circunferencia abdominal</h2><div class="chart-wrap">${buildStandaloneChart(recs,p,'abdominal_circumference_cm',null,'Circunferencia (cm)','cm')}</div></section>
@@ -6460,6 +7065,7 @@ function doctorPatientDetailView(){
     ${doctorTimelineSectionMarkup()}`);
   bindCommonHeader();
   bindDoctorAlertPanel();
+  bindDoctorPatientAssistantOps();
   bindDoctorCarePlan();
   bindDoctorNutrition();
   bindDoctorTimeline();
@@ -6731,6 +7337,7 @@ function adminView(){
   const total=adminUsers.length;
   const patients=adminUsers.filter(u=>u.roles.includes('PATIENT')).length;
   const doctors=adminUsers.filter(u=>u.roles.includes('DOCTOR')).length;
+  const assistants=adminUsers.filter(u=>u.roles.includes('ASSISTANT')).length;
   const suspended=adminUsers.filter(u=>u.status==='SUSPENDED').length;
   app.innerHTML=shell(`${header()}
     <section class="card admin-hero"><div><h2 class="section-title">BodyCare Admin</h2><div class="muted">Gestión de usuarios, accesos y soporte</div></div><span class="owner-chip">${account?.is_owner?'Owner':'Administrador'}</span></section>
@@ -6738,13 +7345,14 @@ function adminView(){
       <div class="metric"><span>Usuarios</span><strong>${total}</strong></div>
       <div class="metric"><span>Pacientes</span><strong>${patients}</strong></div>
       <div class="metric"><span>Médicos</span><strong>${doctors}</strong></div>
+      <div class="metric"><span>Asistentes</span><strong>${assistants}</strong></div>
       <div class="metric"><span>Suspendidos</span><strong>${suspended}</strong></div>
     </section>
     <section class="card"><h2 class="section-title">Agregar usuario</h2>
       <form id="adminInviteForm"><div class="grid">
         <div><label>Nombre</label><input id="adminInviteName" required></div>
         <div><label>Correo</label><input id="adminInviteEmail" type="email" required></div>
-        <div><label>Rol principal</label><select id="adminInviteRole"><option value="PATIENT">Paciente</option><option value="DOCTOR">Médico</option>${account?.is_owner?'<option value="ADMIN">Administrador</option>':''}</select></div>
+        <div><label>Rol principal</label><select id="adminInviteRole"><option value="PATIENT">Paciente</option><option value="DOCTOR">Médico</option><option value="ASSISTANT">Asistente</option>${account?.is_owner?'<option value="ADMIN">Administrador</option>':''}</select></div>
       </div><button class="primary" type="submit" style="margin-top:12px">Enviar invitación</button><p id="adminInviteMsg" class="error"></p></form>
     </section>
     <section class="card">
@@ -6795,7 +7403,7 @@ function bindAdminUserButtons(){
 async function adminInviteUser(e){
   e.preventDefault();
   const role=document.getElementById('adminInviteRole').value;
-  const inviteRoles=role==='PATIENT'?['PATIENT']:role==='DOCTOR'?['PATIENT','DOCTOR']:['PATIENT','ADMIN'];
+  const inviteRoles=role==='PATIENT'?['PATIENT']:role==='DOCTOR'?['PATIENT','DOCTOR']:role==='ASSISTANT'?['ASSISTANT']:['PATIENT','ADMIN'];
   const msg=document.getElementById('adminInviteMsg');msg.textContent='';
   try{
     await invokeFunction('admin-console',{action:'invite_user',email:document.getElementById('adminInviteEmail').value.trim(),display_name:document.getElementById('adminInviteName').value.trim(),roles:inviteRoles});
@@ -6806,7 +7414,7 @@ async function adminEditUser(id){
   const u=adminUsers.find(x=>x.id===id);if(!u)return;
   const name=prompt('Nombre:',u.display_name||'');if(name===null)return;
   const email=prompt('Correo:',u.email||'');if(email===null)return;
-  const rt=prompt('Roles separados por coma: PATIENT, DOCTOR, ADMIN',u.roles.join(', '));if(rt===null)return;
+  const rt=prompt('Roles separados por coma: PATIENT, DOCTOR, ASSISTANT, ADMIN',u.roles.join(', '));if(rt===null)return;
   const nextRoles=rt.split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
   try{await invokeFunction('admin-console',{action:'update_user',user_id:id,display_name:name,email,roles:nextRoles});adminLoaded=false;adminView()}
   catch(err){alert(err.message)}
@@ -6985,7 +7593,7 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();sessionStorage.removeItem(PASSKEY_UNLOCKED_KEY);session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;doctorPatientDetail=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();sessionStorage.removeItem(PASSKEY_UNLOCKED_KEY);session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;doctorPatientDetail=null;assistantProfile=null;assistantDashboard=[];assistantPatientDetail=null;doctorAssistantOps={assistants:[],assignments:[],escalations:[]};availableAssistants=[];editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){
