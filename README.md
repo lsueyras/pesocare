@@ -731,3 +731,31 @@ https://lsueyras.github.io/pesocare/
 - Confirmar un control desde la tarea cierra esa acción automáticamente.
 - Motor idempotente: no duplica una acción por la misma condición.
 - Las tareas se cierran automáticamente cuando la condición se resuelve.
+
+
+## BodyCare V26.1 — Password Setup Gate
+- Corrige invitaciones de Supabase: una sesión creada por el enlace no permite entrar al portal antes de crear contraseña.
+- Flujo: invitación → crear contraseña → confirmar → guardar → acceso.
+- La configuración pendiente persiste si el usuario recarga la página.
+- Corrige también `Olvidé mi contraseña`: enlace de recuperación → nueva contraseña → acceso.
+- Password se actualiza en Supabase Auth; BodyCare no lo almacena.
+- Passkeys se ofrece solamente después de completar la contraseña inicial.
+
+
+## BodyCare V26.2 — Recreate Deleted User Flow
+- Admin now uses `Crear usuario y enviar acceso`.
+- Supports reuse of an email after the prior BodyCare user was deleted.
+- Backend `admin-console` v5 creates/repairs the Auth account, assigns BodyCare roles, and sends the password-creation email.
+- Existing active accounts are protected from accidental role replacement.
+- Admin UI distinguishes full success from `account created / email send failed`.
+- Deleted-account re-creation no longer depends exclusively on Supabase `inviteUserByEmail`.
+
+
+## BodyCare V26.3 — Role-safe onboarding
+- A non-PATIENT account can no longer be sent to the weight/circumference onboarding.
+- `initialProfileView()` has a hard PATIENT-role guard.
+- Generic render path has a second hard role guard.
+- Login now says `Crear cuenta de paciente`.
+- Login explicitly states that Doctors and Assistants are created by Administration.
+- Admin role selector explains that the invitee does not choose the role.
+- Designed to work with `admin-console` v6 and auth role-aware trigger migration.

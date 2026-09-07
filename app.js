@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='26.1';
+const APP_VERSION='26.3';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -2784,9 +2784,10 @@ function loginView(message=''){
 
         <div class="actions" style="margin-top:14px">
           <button class="primary" type="submit">Ingresar</button>
-          <button class="secondary" type="button" id="signup">Crear cuenta</button>
+          <button class="secondary" type="button" id="signup">Crear cuenta de paciente</button>
         </div>
 
+        <div class="auth-role-note"><strong>Médicos y asistentes</strong><span>Su acceso se crea desde Administración. No necesitan registrarse como paciente.</span></div>
         <div style="margin-top:12px"><button type="button" class="linkbtn" id="forgot">Olvidé mi contraseña</button></div>
         <p id="authMsg" class="error"></p>
       </form>
@@ -3050,6 +3051,21 @@ async function loadData(){
   }
 }
 
+
+function roleSetupMismatchView(){
+  app.innerHTML=shell(`
+    <section class="card auth-card role-setup-mismatch-card">
+      ${brandBlock('Acceso BodyCare')}
+      <div class="notice warning">
+        <strong>Tu cuenta no tiene un espacio de trabajo válido.</strong>
+        <span>BodyCare evitó abrir el registro de paciente porque esta cuenta no tiene rol Paciente.</span>
+      </div>
+      <p class="muted">Cierra sesión y vuelve a ingresar. Si el problema continúa, un Administrador debe revisar el rol de la cuenta.</p>
+      <button type="button" class="secondary" id="mismatchLogout">Cerrar sesión</button>
+    </section>`);
+  document.getElementById('mismatchLogout')?.addEventListener('click',logout);
+}
+
 function render(){
   let result;
   if(account?.status!=='ACTIVE')result=suspendedView();
@@ -3058,8 +3074,10 @@ function render(){
     result=doctorPatientDetail?doctorPatientDetailView():doctorView();
   }else if(activePortal==='ASSISTANT'&&hasRole('ASSISTANT')){
     result=assistantPatientDetail?assistantPatientView():assistantView();
-  }else if(!profile){
+  }else if(!profile&&hasRole('PATIENT')){
     result=initialProfileView();
+  }else if(!profile&&!hasRole('PATIENT')){
+    result=roleSetupMismatchView();
   }else if(activePatientTab==='PLAN'){
     result=patientPlanView();
   }else if(activePatientTab==='NUTRITION'){
@@ -3092,6 +3110,7 @@ function header(){
 }
 
 function initialProfileView(){
+  if(!hasRole('PATIENT'))return roleSetupMismatchView();
   app.innerHTML=shell(`${header()}
     <section class="card">
       <h2 class="section-title">Datos iniciales</h2>
@@ -5276,7 +5295,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v26.1'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v26.3'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -7862,8 +7881,8 @@ function adminView(){
       <form id="adminInviteForm"><div class="grid">
         <div><label>Nombre</label><input id="adminInviteName" required></div>
         <div><label>Correo</label><input id="adminInviteEmail" type="email" required></div>
-        <div><label>Rol principal</label><select id="adminInviteRole"><option value="PATIENT">Paciente</option><option value="DOCTOR">Médico</option><option value="ASSISTANT">Asistente</option>${account?.is_owner?'<option value="ADMIN">Administrador</option>':''}</select></div>
-      </div><button class="primary" type="submit" style="margin-top:12px">Enviar invitación</button><p id="adminInviteMsg" class="error"></p></form>
+        <div><label>Rol principal</label><select id="adminInviteRole"><option value="PATIENT">Paciente</option><option value="DOCTOR">Médico</option><option value="ASSISTANT">Asistente</option>${account?.is_owner?'<option value="ADMIN">Administrador</option>':''}</select><small class="field-help">El rol lo define el Administrador y no lo elige el usuario al abrir el correo.</small></div>
+      </div><button class="primary" type="submit" id="adminInviteSubmit" style="margin-top:12px">Crear usuario y enviar acceso</button><p id="adminInviteMsg" class="error"></p></form>
     </section>
     <section class="card">
       <div class="card-head"><div><h2 class="section-title">Usuarios</h2><div class="muted">Modificar cuentas, roles y accesos</div></div><button id="refreshAdmin" class="secondary small-btn">Actualizar</button></div>
@@ -7914,11 +7933,44 @@ async function adminInviteUser(e){
   e.preventDefault();
   const role=document.getElementById('adminInviteRole').value;
   const inviteRoles=role==='PATIENT'?['PATIENT']:role==='DOCTOR'?['PATIENT','DOCTOR']:role==='ASSISTANT'?['ASSISTANT']:['PATIENT','ADMIN'];
-  const msg=document.getElementById('adminInviteMsg');msg.textContent='';
+  const msg=document.getElementById('adminInviteMsg');
+  const btn=document.getElementById('adminInviteSubmit');
+  msg.textContent='';
+  msg.className='error';
+
+  const email=document.getElementById('adminInviteEmail').value.trim().toLowerCase();
+  const displayName=document.getElementById('adminInviteName').value.trim();
+
   try{
-    await invokeFunction('admin-console',{action:'invite_user',email:document.getElementById('adminInviteEmail').value.trim(),display_name:document.getElementById('adminInviteName').value.trim(),roles:inviteRoles});
-    msg.className='notice success';msg.textContent='Invitación enviada.';adminLoaded=false;setTimeout(adminView,400);
-  }catch(err){msg.textContent=err.message}
+    if(btn){btn.disabled=true;btn.textContent='Creando usuario…'}
+
+    const result=await invokeFunction('admin-console',{
+      action:'invite_user',
+      email,
+      display_name:displayName,
+      roles:inviteRoles
+    });
+
+    if(result?.warning){
+      msg.className='notice warning';
+      msg.textContent=result.warning;
+    }else{
+      msg.className='notice success';
+      msg.textContent='Usuario creado. Se envió un enlace para crear su contraseña.';
+    }
+
+    e.target.reset();
+    adminLoaded=false;
+    setTimeout(adminView,650);
+  }catch(err){
+    const raw=String(err?.message||err||'');
+    msg.className='error';
+    msg.textContent=raw.includes('cuenta activa')
+      ?'Ese correo ya tiene una cuenta activa. Busca el usuario y usa Editar o Reset clave.'
+      :raw;
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Crear usuario y enviar acceso'}
+  }
 }
 async function adminEditUser(id){
   const u=adminUsers.find(x=>x.id===id);if(!u)return;

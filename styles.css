@@ -2906,3 +2906,16 @@ body{background:var(--bc-bg);color:var(--bc-text)}
   .password-setup-card{margin:12px auto}
   .password-setup-intro{padding:11px}
 }
+
+/* BodyCare V26.2 — robust user recreation UX */
+#adminInviteMsg.notice{margin-top:10px}
+#adminInviteSubmit:disabled{opacity:.7;cursor:wait}
+
+/* BodyCare V26.3 — role-safe onboarding */
+.auth-role-note{display:flex;flex-direction:column;gap:2px;margin-top:14px;padding:10px 12px;border:1px solid #e4e7ec;border-radius:11px;background:#f9fafb}
+.auth-role-note strong{color:#344054;font-size:.7rem}
+.auth-role-note span{color:#667085;font-size:.64rem;line-height:1.35}
+.field-help{display:block;margin-top:5px;color:#667085;font-size:.61rem;line-height:1.35}
+.role-setup-mismatch-card .notice{display:flex;flex-direction:column;gap:4px;margin:14px 0}
+.role-setup-mismatch-card .notice strong{font-size:.78rem}
+.role-setup-mismatch-card .notice span{font-size:.68rem;line-height:1.4}
