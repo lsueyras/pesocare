@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='25.2';
+const APP_VERSION='26.0';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -50,6 +50,17 @@ let patientContactDetails={phone:null,whatsapp_phone:null,preferred_channel:'APP
 let assistantProfile=null, assistantDashboard=[], assistantPatientDetail=null;
 let assistantFilter='ALL', assistantSearch='', assistantSyncing=false;
 let doctorAssistantOps={assistants:[],assignments:[],escalations:[]}, availableAssistants=[];
+let remoteCareSettings={
+  auto_control_confirmation:true,
+  control_confirmation_hours:48,
+  auto_record_followup:true,
+  record_followup_days:7,
+  auto_care_plan_followup:true,
+  care_plan_lookahead_days:1,
+  auto_nutrition_followup:false,
+  nutrition_no_log_days:2
+};
+let remoteActionLastRun=null;
 let careLinks=[], linkedDoctorProfiles=[], patientPrescriptions=[], patientMessages=[], patientControls=[], supportTickets=[];
 let patientCarePlan={goals:[],actions:[]}, patientCarePlanDoctorId=null, patientCarePlanSyncing=false;
 let patientNutritionPlan={plan:null,items:[]}, patientNutritionCatalog=[], patientNutritionDay=null;
@@ -2770,6 +2781,12 @@ async function loadData(){
   patientContactDetails={phone:null,whatsapp_phone:null,preferred_channel:'APP',contact_window:null};
   assistantProfile=null;assistantDashboard=[];assistantPatientDetail=null;
   doctorAssistantOps={assistants:[],assignments:[],escalations:[]};availableAssistants=[];
+  remoteCareSettings={
+    auto_control_confirmation:true,control_confirmation_hours:48,
+    auto_record_followup:true,record_followup_days:7,
+    auto_care_plan_followup:true,care_plan_lookahead_days:1,
+    auto_nutrition_followup:false,nutrition_no_log_days:2
+  };remoteActionLastRun=null;
 
   if(account?.status!=='ACTIVE')return;
 
@@ -2845,8 +2862,15 @@ async function loadData(){
     }
 
     try{
-      doctorAssistantOps=await dbRpc('bodycare_get_doctor_assistant_ops',{})||{assistants:[],assignments:[],escalations:[]};
-      availableAssistants=await dbRpc('bodycare_get_available_assistants',{})||[];
+      const [ops,assistants,settingsRows]=await Promise.all([
+        dbRpc('bodycare_get_doctor_assistant_ops',{}),
+        dbRpc('bodycare_get_available_assistants',{}),
+        dbRpc('bodycare_get_remote_care_settings',{})
+      ]);
+      doctorAssistantOps=ops||{assistants:[],assignments:[],escalations:[]};
+      availableAssistants=assistants||[];
+      const settings=Array.isArray(settingsRows)?settingsRows[0]||null:settingsRows;
+      if(settings)remoteCareSettings={...remoteCareSettings,...settings};
     }catch(err){
       console.warn('Doctor remote-care team unavailable',err);
       doctorAssistantOps={assistants:[],assignments:[],escalations:[]};
@@ -5092,7 +5116,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v25.2'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v26.0'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -6099,6 +6123,101 @@ async function saveDoctorProfile(e){
 }
 
 
+
+function remoteActionSettingsValue(){
+  return {
+    auto_control_confirmation:remoteCareSettings?.auto_control_confirmation!==false,
+    control_confirmation_hours:Number(remoteCareSettings?.control_confirmation_hours||48),
+    auto_record_followup:remoteCareSettings?.auto_record_followup!==false,
+    record_followup_days:Number(remoteCareSettings?.record_followup_days||doctorAlertSettings?.record_reminder_days||7),
+    auto_care_plan_followup:remoteCareSettings?.auto_care_plan_followup!==false,
+    care_plan_lookahead_days:Number(remoteCareSettings?.care_plan_lookahead_days??1),
+    auto_nutrition_followup:remoteCareSettings?.auto_nutrition_followup===true,
+    nutrition_no_log_days:Number(remoteCareSettings?.nutrition_no_log_days||2)
+  };
+}
+function remoteActionStatusText(){
+  return remoteActionLastRun
+    ? `Última ejecución manual: ${formatDateTime(remoteActionLastRun)}`
+    : 'Motor automático activo · se ejecuta cada hora';
+}
+function remoteActionSettingsMarkup(){
+  const s=remoteActionSettingsValue();
+  return `<details class="remote-action-engine">
+    <summary>
+      <div><strong>Acciones automáticas</strong><span>${remoteActionStatusText()}</span></div>
+      <span class="action-engine-live"><i></i>Activo</span>
+    </summary>
+    <form id="remoteActionSettingsForm" class="remote-action-settings-form">
+      <div class="remote-action-rule">
+        <label class="remote-action-check"><input id="autoControlConfirmation" type="checkbox" ${s.auto_control_confirmation?'checked':''}><span><strong>Confirmar controles próximos</strong><small>Crear una tarea para el asistente antes del control.</small></span></label>
+        <div class="remote-action-number"><input id="controlConfirmationHours" type="number" min="12" max="168" step="12" value="${s.control_confirmation_hours}"><span>h antes</span></div>
+      </div>
+      <div class="remote-action-rule">
+        <label class="remote-action-check"><input id="autoRecordFollowup" type="checkbox" ${s.auto_record_followup?'checked':''}><span><strong>Paciente sin registro</strong><small>Usa el criterio médico actual de ${s.record_followup_days} días sin nueva medición.</small></span></label>
+        <div class="remote-action-readonly">${s.record_followup_days} días</div>
+      </div>
+      <div class="remote-action-rule">
+        <label class="remote-action-check"><input id="autoCarePlanFollowup" type="checkbox" ${s.auto_care_plan_followup?'checked':''}><span><strong>Acciones del plan por vencer</strong><small>Crear seguimiento cuando un hito esté próximo o vencido.</small></span></label>
+        <div class="remote-action-number"><input id="carePlanLookaheadDays" type="number" min="0" max="14" step="1" value="${s.care_plan_lookahead_days}"><span>días antes</span></div>
+      </div>
+      <div class="remote-action-rule nutrition-rule">
+        <label class="remote-action-check"><input id="autoNutritionFollowup" type="checkbox" ${s.auto_nutrition_followup?'checked':''}><span><strong>Falta de registro nutricional</strong><small>Opcional. Viene desactivado para que el médico decida si forma parte de su seguimiento.</small></span></label>
+        <div class="remote-action-number"><input id="nutritionNoLogDays" type="number" min="1" max="14" step="1" value="${s.nutrition_no_log_days}"><span>días</span></div>
+      </div>
+      <div class="remote-action-engine-footer">
+        <div><strong>Regla de seguridad</strong><span>Las acciones son operacionales. Nunca modifican prescripciones, metas clínicas ni cierran alertas médicas.</span></div>
+        <div class="remote-action-engine-buttons">
+          <button type="button" class="secondary small-btn" id="runRemoteActionsNow">Ejecutar ahora</button>
+          <button type="submit" class="primary small-btn">Guardar automatización</button>
+        </div>
+      </div>
+    </form>
+  </details>`;
+}
+async function saveRemoteActionSettings(e){
+  e.preventDefault();
+  const payload={
+    p_auto_control_confirmation:!!document.getElementById('autoControlConfirmation')?.checked,
+    p_control_confirmation_hours:Number(document.getElementById('controlConfirmationHours')?.value||48),
+    p_auto_record_followup:!!document.getElementById('autoRecordFollowup')?.checked,
+    p_auto_care_plan_followup:!!document.getElementById('autoCarePlanFollowup')?.checked,
+    p_care_plan_lookahead_days:Number(document.getElementById('carePlanLookaheadDays')?.value||0),
+    p_auto_nutrition_followup:!!document.getElementById('autoNutritionFollowup')?.checked,
+    p_nutrition_no_log_days:Number(document.getElementById('nutritionNoLogDays')?.value||2)
+  };
+  try{
+    await dbRpc('bodycare_save_remote_care_settings',payload);
+    remoteCareSettings={
+      ...remoteCareSettings,
+      auto_control_confirmation:payload.p_auto_control_confirmation,
+      control_confirmation_hours:payload.p_control_confirmation_hours,
+      auto_record_followup:payload.p_auto_record_followup,
+      auto_care_plan_followup:payload.p_auto_care_plan_followup,
+      care_plan_lookahead_days:payload.p_care_plan_lookahead_days,
+      auto_nutrition_followup:payload.p_auto_nutrition_followup,
+      nutrition_no_log_days:payload.p_nutrition_no_log_days
+    };
+    await runRemoteActionsNow(false);
+    await syncDoctorAssistantOps(false);
+    renderDoctorRemoteOps();
+    showToast('Automatización guardada','El motor de acciones quedó actualizado.','ASSISTANT_TASK_ASSIGNED');
+  }catch(err){alert('No fue posible guardar la automatización: '+err.message)}
+}
+async function runRemoteActionsNow(showResult=true){
+  try{
+    const result=await dbRpc('bodycare_run_remote_actions_now',{});
+    remoteActionLastRun=result?.run_at||new Date().toISOString();
+    if(showResult){
+      const generated=Number(result?.generated||0),closed=Number(result?.auto_closed||0);
+      showToast('Motor ejecutado',`${generated} acción${generated===1?'':'es'} creada${generated===1?'':'s'} · ${closed} cerrada${closed===1?'':'s'} automáticamente.`,'ASSISTANT_TASK_ASSIGNED');
+    }
+    return result;
+  }catch(err){
+    if(showResult)alert('No fue posible ejecutar el motor de acciones: '+err.message);
+    throw err;
+  }
+}
 function doctorRemoteAssistantAssigned(patientId,assistantId){
   return (doctorAssistantOps?.assignments||[]).some(a=>a.patient_user_id===patientId&&a.assistant_user_id===assistantId);
 }
@@ -6109,9 +6228,11 @@ function doctorRemoteOpsMarkup(){
 
   return `<section class="card doctor-remote-ops-card" id="doctorRemoteOpsSection">
     <div class="card-head">
-      <div><h2 class="section-title">Equipo de gestión remota</h2><div class="muted">Asigna asistentes, revisa carga operacional y recibe escalaciones.</div></div>
+      <div><h2 class="section-title">Equipo de gestión remota</h2><div class="muted">Asigna asistentes, revisa carga operacional y automatiza acciones repetitivas.</div></div>
       <span class="remote-ops-chip">${linked.length} asistente${linked.length===1?'':'s'}</span>
     </div>
+
+    ${remoteActionSettingsMarkup()}
 
     ${unlinked.length?`<div class="remote-team-add">
       <select id="doctorAddAssistantSelect">${unlinked.map(a=>`<option value="${a.assistant_user_id}">${esc(a.display_name||'Asistente')}${a.job_title?` · ${esc(a.job_title)}`:''}</option>`).join('')}</select>
@@ -6148,8 +6269,15 @@ function doctorPatientAssistantAssignmentMarkup(patientId){
 async function syncDoctorAssistantOps(renderUI=true){
   if(!hasRole('DOCTOR'))return;
   try{
-    doctorAssistantOps=await dbRpc('bodycare_get_doctor_assistant_ops',{})||{assistants:[],assignments:[],escalations:[]};
-    availableAssistants=await dbRpc('bodycare_get_available_assistants',{})||[];
+    const [ops,assistants,settingsRows]=await Promise.all([
+      dbRpc('bodycare_get_doctor_assistant_ops',{}),
+      dbRpc('bodycare_get_available_assistants',{}),
+      dbRpc('bodycare_get_remote_care_settings',{})
+    ]);
+    doctorAssistantOps=ops||{assistants:[],assignments:[],escalations:[]};
+    availableAssistants=assistants||[];
+    const settings=Array.isArray(settingsRows)?settingsRows[0]||null:settingsRows;
+    if(settings)remoteCareSettings={...remoteCareSettings,...settings};
     if(renderUI){
       if(doctorPatientDetail)renderDoctorPatientAssistantSection();
       else renderDoctorRemoteOps();
@@ -6177,6 +6305,7 @@ async function doctorAssignPatientAssistant(assistantId,active){
   const patientId=doctorPatientDetail?.profile?.user_id;if(!patientId)return;
   try{
     await dbRpc('bodycare_doctor_assign_patient_assistant',{p_assistant_user_id:assistantId,p_patient_user_id:patientId,p_active:active});
+    if(active){try{await runRemoteActionsNow(false)}catch{}}
     await syncDoctorAssistantOps(true);
   }catch(err){alert('No fue posible actualizar la asignación: '+err.message)}
 }
@@ -6191,6 +6320,12 @@ async function doctorResolveEscalation(taskId){
 function bindDoctorRemoteOps(){
   document.getElementById('doctorAddAssistantBtn')?.addEventListener('click',()=>{
     const id=document.getElementById('doctorAddAssistantSelect')?.value;if(id)doctorLinkAssistant(id,true);
+  });
+  document.getElementById('remoteActionSettingsForm')?.addEventListener('submit',saveRemoteActionSettings);
+  document.getElementById('runRemoteActionsNow')?.addEventListener('click',async()=>{
+    const btn=document.getElementById('runRemoteActionsNow');if(btn)btn.disabled=true;
+    try{await runRemoteActionsNow(true);await syncDoctorAssistantOps(false);renderDoctorRemoteOps()}
+    finally{if(btn)btn.disabled=false}
   });
   document.querySelectorAll('[data-unlink-assistant]').forEach(btn=>btn.addEventListener('click',()=>{if(confirm('¿Quitar este asistente del equipo y revocar sus pacientes?'))doctorLinkAssistant(btn.dataset.unlinkAssistant,false)}));
   document.querySelectorAll('[data-resolve-escalation]').forEach(btn=>btn.addEventListener('click',()=>doctorResolveEscalation(btn.dataset.resolveEscalation)));
@@ -6367,11 +6502,49 @@ function assistantControlListMarkup(d){
     ${c.status==='SCHEDULED'?`<button type="button" class="primary small-btn" data-assistant-confirm-control="${c.id}">Confirmar por contacto</button>`:''}
   </div>`).join(''):'<div class="empty-state compact">Sin controles recientes.</div>';
 }
+
+function assistantTaskTypeLabel(type){
+  return ({
+    CONTROL_CONFIRMATION:'Confirmar control',
+    RECORD_FOLLOWUP:'Seguimiento de registro',
+    NUTRITION_FOLLOWUP:'Seguimiento nutricional',
+    CARE_PLAN_FOLLOWUP:'Seguimiento de plan',
+    CONTACT:'Contacto',
+    GENERAL:'Gestión general'
+  })[type]||String(type||'GESTIÓN').replaceAll('_',' ');
+}
+function assistantTaskIcon(type){
+  return ({CONTROL_CONFIRMATION:'▣',RECORD_FOLLOWUP:'⚖',NUTRITION_FOLLOWUP:'♨',CARE_PLAN_FOLLOWUP:'◎',CONTACT:'☎',GENERAL:'•'})[type]||'•';
+}
+function assistantTaskPriorityRank(priority){return ({HIGH:0,NORMAL:1,LOW:2})[priority]??3}
+function assistantTaskStatusRank(status){return ({ESCALATED:0,OPEN:1,DONE:2,CANCELLED:3})[status]??4}
+function assistantTaskActionMarkup(t){
+  if(t.status!=='OPEN')return '';
+  if(t.task_type==='CONTROL_CONFIRMATION'&&t.source_type==='CONTROL'&&t.source_id){
+    return `<div class="assistant-task-actions">
+      <button type="button" class="primary small-btn" data-task-confirm-control="${t.source_id}">Confirmar control</button>
+      <button type="button" class="secondary small-btn" data-complete-assistant-task="${t.id}">Cerrar tarea</button>
+    </div>`;
+  }
+  return `<div class="assistant-task-actions">
+    ${['RECORD_FOLLOWUP','NUTRITION_FOLLOWUP','CARE_PLAN_FOLLOWUP','CONTACT'].includes(t.task_type)?`<button type="button" class="secondary small-btn" data-task-register-contact="${t.id}">Registrar gestión</button>`:''}
+    <button type="button" class="primary small-btn" data-complete-assistant-task="${t.id}">Completar</button>
+  </div>`;
+}
 function assistantTaskListMarkup(d){
-  const rows=d?.tasks||[];
-  return rows.length?rows.map(t=>`<div class="assistant-task-row status-${String(t.status||'').toLowerCase()}">
-    <div><strong>${esc(t.title)}</strong><span>${esc(t.task_type||'GESTIÓN')} · ${t.due_at?formatDateTime(t.due_at):'Sin vencimiento'} · ${esc(t.status)}</span>${t.detail?`<small>${esc(t.detail)}</small>`:''}</div>
-    ${t.status==='OPEN'?`<button type="button" class="secondary small-btn" data-complete-assistant-task="${t.id}">Completar</button>`:''}
+  const rows=[...(d?.tasks||[])].sort((a,b)=>{
+    const sr=assistantTaskStatusRank(a.status)-assistantTaskStatusRank(b.status);if(sr)return sr;
+    const pr=assistantTaskPriorityRank(a.priority)-assistantTaskPriorityRank(b.priority);if(pr)return pr;
+    return String(a.due_at||'9999').localeCompare(String(b.due_at||'9999'));
+  });
+  return rows.length?rows.map(t=>`<div class="assistant-task-row status-${String(t.status||'').toLowerCase()} ${t.auto_generated?'auto-task':''}">
+    <div class="assistant-task-icon">${assistantTaskIcon(t.task_type)}</div>
+    <div class="assistant-task-main">
+      <div class="assistant-task-title-line"><strong>${esc(t.title)}</strong>${t.auto_generated?'<span class="auto-task-badge">Automática</span>':''}${t.priority==='HIGH'?'<span class="task-priority-badge high">Alta</span>':''}</div>
+      <span>${esc(assistantTaskTypeLabel(t.task_type))} · ${t.due_at?formatDateTime(t.due_at):'Sin vencimiento'} · ${esc(t.status)}</span>
+      ${t.detail?`<small>${esc(t.detail)}</small>`:''}
+    </div>
+    ${assistantTaskActionMarkup(t)}
   </div>`).join(''):'<div class="empty-state compact">Sin tareas registradas.</div>';
 }
 function assistantEventListMarkup(d){
@@ -6451,6 +6624,12 @@ function bindAssistantPatientView(){
   document.getElementById('assistantEscalationForm')?.addEventListener('submit',submitAssistantEscalation);
   document.getElementById('assistantEscalateQuick')?.addEventListener('click',()=>document.getElementById('assistantEscalationNote')?.scrollIntoView({behavior:'smooth',block:'center'}));
   document.querySelectorAll('[data-assistant-confirm-control]').forEach(btn=>btn.addEventListener('click',()=>assistantConfirmControl(btn.dataset.assistantConfirmControl)));
+  document.querySelectorAll('[data-task-confirm-control]').forEach(btn=>btn.addEventListener('click',()=>assistantConfirmControl(btn.dataset.taskConfirmControl)));
+  document.querySelectorAll('[data-task-register-contact]').forEach(btn=>btn.addEventListener('click',()=>{
+    document.getElementById('assistantContactLogForm')?.scrollIntoView({behavior:'smooth',block:'center'});
+    const note=document.getElementById('assistantEventNote');
+    if(note&&!note.value)note.value='Seguimiento asociado a tarea operativa: '+(btn.closest('.assistant-task-row')?.querySelector('.assistant-task-main strong')?.textContent||'');
+  }));
   document.querySelectorAll('[data-complete-assistant-task]').forEach(btn=>btn.addEventListener('click',()=>completeAssistantTask(btn.dataset.completeAssistantTask)));
 }
 async function syncAssistantPatient(renderUI=true){
@@ -7764,7 +7943,8 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();sessionStorage.removeItem(PASSKEY_UNLOCKED_KEY);session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;doctorPatientDetail=null;assistantProfile=null;assistantDashboard=[];assistantPatientDetail=null;doctorAssistantOps={assistants:[],assignments:[],escalations:[]};availableAssistants=[];editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
+  clearStoredSession();sessionStorage.removeItem(PASSKEY_UNLOCKED_KEY);session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;doctorPatientDetail=null;assistantProfile=null;assistantDashboard=[];assistantPatientDetail=null;doctorAssistantOps={assistants:[],assignments:[],escalations:[]};availableAssistants=[];
+remoteCareSettings={auto_control_confirmation:true,control_confirmation_hours:48,auto_record_followup:true,record_followup_days:7,auto_care_plan_followup:true,care_plan_lookahead_days:1,auto_nutrition_followup:false,nutrition_no_log_days:2};remoteActionLastRun=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){

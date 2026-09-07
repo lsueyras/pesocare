@@ -2839,3 +2839,53 @@ body{background:var(--bc-bg);color:var(--bc-text)}
   .profile-support-card{margin-bottom:18px!important}
   .doctor-next-control-card .card-head{align-items:flex-start}
 }
+
+/* BodyCare V26 — Motor de acciones operativas */
+.remote-action-engine{margin:12px 0 14px;border:1px solid #c7d7fe;border-radius:13px;background:#f7f9ff;overflow:hidden}
+.remote-action-engine>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;cursor:pointer;list-style:none}
+.remote-action-engine>summary::-webkit-details-marker{display:none}
+.remote-action-engine>summary strong{display:block;color:#344054;font-size:.76rem}
+.remote-action-engine>summary span:not(.action-engine-live){display:block;margin-top:2px;color:#667085;font-size:.63rem}
+.action-engine-live{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:#ecfdf3;color:#027a48;font-size:.62rem;font-weight:800}
+.action-engine-live i{width:7px;height:7px;border-radius:50%;background:#12b76a;box-shadow:0 0 0 3px rgba(18,183,106,.12)}
+.remote-action-settings-form{padding:0 12px 12px;border-top:1px solid #e4e7ec}
+.remote-action-rule{display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #eaecf0}
+.remote-action-check{display:flex;align-items:flex-start;gap:9px;margin:0}
+.remote-action-check input{width:18px;height:18px;margin:1px 0 0;accent-color:#155eef;flex:0 0 18px}
+.remote-action-check strong{display:block;color:#344054;font-size:.72rem}
+.remote-action-check small{display:block;margin-top:2px;color:#667085;font-size:.63rem;line-height:1.35}
+.remote-action-number{display:flex;align-items:center;gap:5px}
+.remote-action-number input{width:66px;min-height:36px;padding:6px 7px}
+.remote-action-number span,.remote-action-readonly{color:#667085;font-size:.63rem}
+.remote-action-readonly{text-align:right}
+.nutrition-rule{background:linear-gradient(90deg,transparent,#fffaf5)}
+.remote-action-engine-footer{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding-top:11px}
+.remote-action-engine-footer>div:first-child strong{display:block;color:#344054;font-size:.68rem}
+.remote-action-engine-footer>div:first-child span{display:block;margin-top:2px;color:#667085;font-size:.61rem;line-height:1.35}
+.remote-action-engine-buttons{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+
+.assistant-task-row{display:grid!important;grid-template-columns:34px minmax(0,1fr) auto!important;align-items:center!important}
+.assistant-task-row.auto-task{background:#fbfcff;border-left:3px solid #84adff;padding-left:8px}
+.assistant-task-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:#eef4ff;color:#175cd3;font-size:.9rem}
+.assistant-task-main{min-width:0}
+.assistant-task-title-line{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.assistant-task-title-line strong{display:inline!important}
+.auto-task-badge,.task-priority-badge{display:inline-flex;align-items:center;min-height:20px;padding:2px 6px;border-radius:999px;font-size:.56rem;font-weight:800}
+.auto-task-badge{background:#eef4ff;color:#175cd3}
+.task-priority-badge.high{background:#fef3f2;color:#b42318}
+.assistant-task-actions{display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}
+
+@media(max-width:760px){
+  .remote-action-rule{grid-template-columns:1fr}
+  .remote-action-number{padding-left:27px}
+  .remote-action-readonly{text-align:left;padding-left:27px}
+  .remote-action-engine-footer{align-items:stretch;flex-direction:column}
+  .remote-action-engine-buttons{display:grid;grid-template-columns:1fr 1fr}
+  .assistant-task-row{grid-template-columns:32px minmax(0,1fr)!important;align-items:start!important}
+  .assistant-task-actions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .assistant-task-actions>*{width:100%}
+}
+@media(max-width:430px){
+  .remote-action-engine-buttons{grid-template-columns:1fr}
+  .assistant-task-actions{grid-template-columns:1fr}
+}

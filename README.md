@@ -719,3 +719,15 @@ https://lsueyras.github.io/pesocare/
   4. profesionales vinculados.
 - Compatibilidad: usuarios que tenían `SUPPORT` guardado se redirigen automáticamente a `PROFILE`.
 - Sin cambios de backend.
+
+## BodyCare V26 — Remote Action Engine
+- Motor automático de acciones operativas ejecutado cada hora en Supabase.
+- Médico configura confirmación de controles, falta de registros, hitos del plan y seguimiento nutricional opcional.
+- Falta de registro usa `record_reminder_days` del criterio médico existente.
+- Nutrición viene desactivada por defecto.
+- `Ejecutar ahora` permite generar acciones inmediatamente.
+- Tareas automáticas muestran badge `Automática`.
+- Orden por estado, prioridad y vencimiento.
+- Confirmar un control desde la tarea cierra esa acción automáticamente.
+- Motor idempotente: no duplica una acción por la misma condición.
+- Las tareas se cierran automáticamente cuando la condición se resuelve.
