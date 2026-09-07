@@ -687,3 +687,14 @@ https://lsueyras.github.io/pesocare/
   - ASSISTANT_PATIENT_ASSIGNED
   - ASSISTANT_ESCALATION
   - ASSISTANT_ESCALATION_RESOLVED
+
+## BodyCare V25.1 — UX/UI Refresh
+- Nueva arquitectura visual tipo InsideCare / IHSTime.
+- Escritorio: sidebar persistente + topbar + workspace.
+- Médico: Agenda y Equipo remoto en grid; navegación directa a pacientes/resultados/criterios.
+- Asistente: navegación operativa por Inicio/Hoy/Confirmar/Sin registro/Escalar/Pendientes.
+- Paciente desktop: métricas compactas y gráficos lado a lado.
+- Móvil paciente: barra inferior fija + botón flotante para registrar peso/cintura.
+- Móvil asistente: Inicio/Hoy/Pendientes/Escalar.
+- Móvil médico: Inicio/Agenda/Pacientes/Equipo.
+- Sin cambios de backend ni permisos.

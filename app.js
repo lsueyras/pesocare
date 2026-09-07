@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='25.0';
+const APP_VERSION='25.1';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -784,8 +784,88 @@ function bindPrescriptionCatalog(editing){
   }
 }
 
+function workspaceTitle(){
+  if(activePortal==='DOCTOR')return doctorPatientDetail?.profile?.full_name||'Escritorio médico';
+  if(activePortal==='ASSISTANT')return assistantPatientDetail?.patient?.full_name||'Gestión remota';
+  if(activePortal==='ADMIN')return 'Administración';
+  return ({TRACKING:'Mi seguimiento',PLAN:'Mi plan',NUTRITION:'Nutrición',DOCTOR:'Mi médico',SUPPORT:'Soporte'})[activePatientTab]||'Mi seguimiento';
+}
+function workspaceSubtitle(){
+  if(activePortal==='DOCTOR')return doctorPatientDetail?'Ficha longitudinal':'Seguimiento clínico-operacional';
+  if(activePortal==='ASSISTANT')return assistantPatientDetail?'Gestión del paciente':'Cola priorizada';
+  if(activePortal==='ADMIN')return 'Usuarios y soporte';
+  return 'BodyCare · Salud y progreso';
+}
+function desktopSidebarNavMarkup(){
+  if(activePortal==='PATIENT'){
+    const items=[['TRACKING','⌂','Seguimiento'],['PLAN','◎','Mi plan'],['NUTRITION','♨','Nutrición'],['DOCTOR','♡','Mi médico'],['SUPPORT','?','Soporte']];
+    return items.map(([v,i,l])=>`<button type="button" class="bc-side-link ${activePatientTab===v?'active':''}" data-patient-tab="${v}"><span>${i}</span><b>${l}</b></button>`).join('');
+  }
+  if(activePortal==='DOCTOR'){
+    if(doctorPatientDetail)return `
+      <button type="button" class="bc-side-link" id="sidebarBackDoctorPatients"><span>←</span><b>Volver a pacientes</b></button>
+      <div class="bc-side-divider"></div>
+      <button type="button" class="bc-side-link active" data-scroll-target="doctorPatientTop"><span>◉</span><b>Resumen</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="doctorControlsSection"><span>▣</span><b>Controles</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="doctorCarePlanSection"><span>◎</span><b>Plan</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="doctorNutritionSection"><span>♨</span><b>Nutrición</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="doctorClinicalTimelineSection"><span>≡</span><b>Timeline</b></button>`;
+    return `
+      <button type="button" class="bc-side-link active" data-scroll-target="doctorHomePanel"><span>⌂</span><b>Inicio</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="doctorAgendaPanel"><span>▣</span><b>Agenda</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="doctorPatientsPanel"><span>♙</span><b>Pacientes</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="doctorRemoteOpsSection"><span>⇄</span><b>Equipo remoto</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="doctorOutcomesSection"><span>↗</span><b>Resultados</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="doctorSettingsPanel"><span>⚙</span><b>Criterios</b></button>`;
+  }
+  if(activePortal==='ASSISTANT'){
+    if(assistantPatientDetail)return `
+      <button type="button" class="bc-side-link" id="sidebarBackAssistantPatients"><span>←</span><b>Volver a la cola</b></button>
+      <div class="bc-side-divider"></div>
+      <button type="button" class="bc-side-link active" data-scroll-target="assistantPatientTop"><span>◉</span><b>Resumen</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="assistantControlsPanel"><span>▣</span><b>Controles</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="assistantTasksPanel"><span>☑</span><b>Tareas</b></button>
+      <button type="button" class="bc-side-link" data-scroll-target="assistantEscalationPanel"><span>!</span><b>Escalar</b></button>`;
+    const items=[['ALL','⌂','Inicio'],['TODAY','▣','Hoy'],['CONFIRM','✓','Confirmar'],['RECORD','↻','Sin registro'],['ESCALATE','!','Escalar'],['TASK','☑','Pendientes']];
+    return items.map(([v,i,l])=>`<button type="button" class="bc-side-link ${assistantFilter===v?'active':''}" data-assistant-filter="${v}"><span>${i}</span><b>${l}</b></button>`).join('');
+  }
+  return `<button type="button" class="bc-side-link active"><span>⌂</span><b>Administración</b></button>`;
+}
+function desktopSidebarMarkup(){
+  if(!currentUser)return '';
+  const roleLabel={PATIENT:'Paciente',DOCTOR:'Médico',ASSISTANT:'Asistente',ADMIN:'Administrador'}[activePortal]||activePortal;
+  const display=assistantProfile?.display_name||doctorProfile?.display_name||profile?.full_name||account?.display_name||currentUser?.email||'';
+  const portals=[['PATIENT','Seguimiento'],['DOCTOR','Médico'],['ASSISTANT','Asistente'],['ADMIN','Admin']].filter(([role])=>hasRole(role));
+  return `<aside class="bc-sidebar">
+    <div class="bc-sidebar-brand"><img src="${BRAND_LOGO_URL}" alt="BodyCare" onerror="this.style.display='none'"><div><strong>BodyCare</strong><span>Salud y progreso</span></div></div>
+    <div class="bc-sidebar-profile"><span class="bc-avatar">${esc((display||'B').trim().charAt(0).toUpperCase())}</span><div><strong>${esc(display)}</strong><span>${roleLabel}</span></div></div>
+    <nav class="bc-sidebar-nav">${desktopSidebarNavMarkup()}</nav>
+    ${portals.length>1?`<div class="bc-sidebar-portals"><small>Cambiar espacio</small>${portals.map(([role,label])=>`<button type="button" class="${activePortal===role?'active':''}" data-portal="${role}">${label}</button>`).join('')}</div>`:''}
+    <div class="bc-sidebar-footer">BodyCare v${APP_VERSION}</div>
+  </aside>`;
+}
+function mobilePrimaryNavMarkup(){
+  if(!currentUser)return '';
+  if(activePortal==='PATIENT'){
+    const items=[['TRACKING','⌂','Inicio'],['PLAN','◎','Plan'],['NUTRITION','♨','Nutrición'],['DOCTOR','♡','Médico'],['SUPPORT','?','Soporte']];
+    return `<nav class="bc-mobile-nav">${items.map(([v,i,l])=>`<button type="button" class="${activePatientTab===v?'active':''}" data-patient-tab="${v}"><span>${i}</span><b>${l}</b></button>`).join('')}${activePatientTab==='TRACKING'?`<button type="button" class="bc-mobile-fab" id="mobileRegisterWeightBtn" aria-label="Registrar peso">+</button>`:''}</nav>`;
+  }
+  if(activePortal==='ASSISTANT'&&!assistantPatientDetail){
+    return `<nav class="bc-mobile-nav bc-mobile-nav-assistant">${[['ALL','⌂','Inicio'],['TODAY','▣','Hoy'],['TASK','☑','Pendientes'],['ESCALATE','!','Escalar']].map(([v,i,l])=>`<button type="button" class="${assistantFilter===v?'active':''}" data-assistant-filter="${v}"><span>${i}</span><b>${l}</b></button>`).join('')}</nav>`;
+  }
+  if(activePortal==='DOCTOR'&&!doctorPatientDetail){
+    return `<nav class="bc-mobile-nav bc-mobile-nav-doctor">
+      <button type="button" data-scroll-target="doctorHomePanel" class="active"><span>⌂</span><b>Inicio</b></button>
+      <button type="button" data-scroll-target="doctorAgendaPanel"><span>▣</span><b>Agenda</b></button>
+      <button type="button" data-scroll-target="doctorPatientsPanel"><span>♙</span><b>Pacientes</b></button>
+      <button type="button" data-scroll-target="doctorRemoteOpsSection"><span>⇄</span><b>Equipo</b></button>
+    </nav>`;
+  }
+  return '';
+}
 function shell(content){
-  return `<main class="shell">${content}<div class="footer">BodyCare · Salud y progreso · v${APP_VERSION}</div></main>`;
+  if(!currentUser)return `<main class="shell shell-auth">${content}<div class="footer">BodyCare · Salud y progreso · v${APP_VERSION}</div></main>`;
+  return `<main class="shell app-shell portal-${String(activePortal||'PATIENT').toLowerCase()}">${desktopSidebarMarkup()}<section class="bc-workspace">${content}<div class="footer">BodyCare · Salud y progreso · v${APP_VERSION}</div></section>${mobilePrimaryNavMarkup()}</main>`;
 }
 
 function authHeaders(token){
@@ -1050,10 +1130,15 @@ function bindCommonHeader(){
       activePortal=portal;
       localStorage.setItem('pesocare_active_portal',portal);
       doctorPatientDetail=null;
+      assistantPatientDetail=null;
       supportSyncSeq++;
       render();
     });
   });
+  document.querySelectorAll('[data-scroll-target]').forEach(btn=>btn.addEventListener('click',()=>document.getElementById(btn.dataset.scrollTarget)?.scrollIntoView({behavior:'smooth',block:'start'})));
+  document.getElementById('mobileRegisterWeightBtn')?.addEventListener('click',()=>document.getElementById('weightEntryCard')?.scrollIntoView({behavior:'smooth',block:'start'}));
+  document.getElementById('sidebarBackDoctorPatients')?.addEventListener('click',()=>{editingPrescriptionId=null;doctorPatientDetail=null;doctorTimelineFilter='ALL';doctorView()});
+  document.getElementById('sidebarBackAssistantPatients')?.addEventListener('click',()=>{assistantPatientDetail=null;assistantView()});
 }
 
 function suspendedView(){
@@ -2808,28 +2893,17 @@ function render(){
 }
 
 function header(){
-  const display=assistantProfile?.display_name||doctorProfile?.display_name||profile?.full_name||account?.display_name||currentUser?.email||'';
   const count=unreadCount();
-  return `<div class="top">
-    <div class="brandrow">
-      <img src="${BRAND_LOGO_URL}" alt="Logo BodyCare" class="brand-image brand-image-small" onerror="this.style.display='none'">
-      <div><div class="brand">BodyCare</div><div class="muted">${esc(display)}</div></div>
-    </div>
+  return `<header class="top bc-topbar">
+    <div class="bc-mobile-brand"><img src="${BRAND_LOGO_URL}" alt="BodyCare" class="brand-image brand-image-small" onerror="this.style.display='none'"><strong>BodyCare</strong></div>
+    <div class="bc-workspace-heading"><span>${esc(workspaceSubtitle())}</span><strong>${esc(workspaceTitle())}</strong></div>
     <div class="top-actions">
-      <span class="realtime-indicator" title="Estado de actualización">
-        <i id="realtimeDot" class="live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}"></i>
-        <span id="realtimeText">${realtimeStatus==='live'?'En vivo':realtimeStatus==='connecting'?'Conectando…':'Sin conexión'}</span>
-      </span>
-      <button class="security-header-button" id="securityBtn" type="button" aria-label="Seguridad y acceso" title="Seguridad y acceso">
-        <span aria-hidden="true">🔐</span>
-      </button>
-      <button class="notification-button" id="notificationBtn" type="button" aria-label="Notificaciones">
-        <span aria-hidden="true">🔔</span>
-        <b id="notificationBadge" class="notification-badge ${count?'':'hidden-badge'}">${count>99?'99+':count}</b>
-      </button>
-      <button class="secondary" id="logout">Salir</button>
+      <span class="realtime-indicator" title="Estado de actualización"><i id="realtimeDot" class="live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}"></i><span id="realtimeText">${realtimeStatus==='live'?'En vivo':realtimeStatus==='connecting'?'Conectando…':'Sin conexión'}</span></span>
+      <button class="security-header-button" id="securityBtn" type="button" aria-label="Seguridad y acceso" title="Seguridad y acceso"><span aria-hidden="true">🔐</span></button>
+      <button class="notification-button" id="notificationBtn" type="button" aria-label="Notificaciones"><span aria-hidden="true">🔔</span><b id="notificationBadge" class="notification-badge ${count?'':'hidden-badge'}">${count>99?'99+':count}</b></button>
+      <button class="secondary bc-logout-btn" id="logout">Salir</button>
     </div>
-  </div>${portalTabs()}`;
+  </header>${portalTabs()}`;
 }
 
 function initialProfileView(){
@@ -3042,8 +3116,8 @@ function dashboardView(){
   const editingRecord=editingWeightRecordId?records.find(r=>r.id===editingWeightRecordId)||null:null;
 
   app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
-    <section class="card">
-      <div class="top" style="margin-bottom:6px">
+    <section class="card patient-welcome-card">
+      <div class="patient-welcome-row">
         <div><h2 class="section-title">Hola, ${esc(profile.full_name.split(' ')[0])}</h2><div class="muted">Seguimiento de ${profile.planned_weeks} semanas · Inicio ${fmt(profile.start_date)}</div></div>
         <div class="actions">
           <button id="reportBtn" class="primary">Generar PDF</button>
@@ -3051,7 +3125,7 @@ function dashboardView(){
         </div>
       </div><div class="progress"><div style="width:${progress}%"></div></div>
     </section>
-    <section class="metrics">
+    <section class="metrics patient-metrics">
       <div class="metric"><span>Peso actual</span><strong>${kg(latest.weight_kg)}</strong></div>
       <div class="metric"><span>Cambio peso</span><strong>${change>0?'+':''}${change.toFixed(2)} kg</strong></div>
       <div class="metric"><span>Cintura actual</span><strong>${cm(currentAbdomen)}</strong></div>
@@ -3080,9 +3154,11 @@ function dashboardView(){
       </div>
       <p id="weightMsg" class="error"></p></form>
     </section>
-    <section class="card"><h2 class="section-title">Evolución de peso</h2><div class="muted">Cada medición se ubica según su fecha exacta dentro de las semanas de seguimiento.</div><div id="chart" class="chart-wrap"></div></section>
-    <section class="card"><h2 class="section-title">Evolución de circunferencia abdominal</h2><div class="muted">La línea incluye todas las mediciones registradas, incluso varias dentro de una misma semana.</div><div id="abdomenChart" class="chart-wrap"></div></section>
-    <section class="card">
+    <div class="patient-chart-grid">
+      <section class="card"><h2 class="section-title">Evolución de peso</h2><div class="muted">Cada medición se ubica según su fecha exacta dentro de las semanas de seguimiento.</div><div id="chart" class="chart-wrap"></div></section>
+      <section class="card"><h2 class="section-title">Evolución de circunferencia abdominal</h2><div class="muted">La línea incluye todas las mediciones registradas, incluso varias dentro de una misma semana.</div><div id="abdomenChart" class="chart-wrap"></div></section>
+    </div>
+    <section class="card patient-history-card">
       <h2 class="section-title">Historial</h2>
       <div class="table-wrap history-table-wrap"><table class="history-table">
         <colgroup>
@@ -4916,7 +4992,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v25.0'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v25.1'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -6115,22 +6191,15 @@ function assistantFiltersMarkup(){
     <input id="assistantSearch" type="search" placeholder="Buscar paciente" value="${esc(assistantSearch)}">
   </div>`;
 }
-function assistantMobileNavMarkup(){
-  return `<nav class="assistant-mobile-nav">
-    <button type="button" data-assistant-mobile-filter="ALL" class="${assistantFilter==='ALL'?'active':''}"><span>⌂</span>Inicio</button>
-    <button type="button" data-assistant-mobile-filter="TODAY" class="${assistantFilter==='TODAY'?'active':''}"><span>🗓</span>Hoy</button>
-    <button type="button" data-assistant-mobile-filter="TASK" class="${assistantFilter==='TASK'?'active':''}"><span>☑</span>Pendientes</button>
-    <button type="button" id="assistantProfileBtnMobile"><span>👤</span>Perfil</button>
-  </nav>`;
-}
+function assistantMobileNavMarkup(){return ''}
 function assistantView(){
   app.innerHTML=shell(`${header()}
-    <section class="card assistant-hero">
+    <section class="card assistant-hero" id="assistantHomePanel">
       <div><span class="assistant-eyebrow">BodyCare Remote</span><h2 class="section-title">Gestión remota</h2><div class="muted">Prioriza, contacta y documenta el seguimiento de pacientes asignados.</div></div>
       <button type="button" class="secondary small-btn" id="assistantProfileBtn">Editar perfil</button>
     </section>
     ${assistantSummaryMarkup()}
-    <section class="card assistant-worklist-card">
+    <section class="card assistant-worklist-card" id="assistantWorklistPanel">
       <div class="card-head"><div><h2 class="section-title">Cola de trabajo</h2><div class="muted">Ordenada por escalaciones, confirmaciones y falta de registros.</div></div><span id="assistantSyncStatus" class="agenda-sync-status">Actualizado</span></div>
       ${assistantFiltersMarkup()}
       <div id="assistantQueue">${assistantQueueMarkup()}</div>
@@ -6213,7 +6282,7 @@ function assistantPatientView(){
   const d=assistantPatientDetail;if(!d)return assistantView();
   const p=d.patient||{},last=(d.recent_records||[])[0]||null,next=(d.controls||[]).filter(c=>['SCHEDULED','CONFIRMED'].includes(c.status)&&new Date(c.scheduled_at)>=new Date()).sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)))[0]||null;
   app.innerHTML=shell(`${header()}
-    <section class="card assistant-detail-head">
+    <section class="card assistant-detail-head" id="assistantPatientTop">
       <div><button type="button" class="linkbtn" id="backAssistantPatients">← Cola de trabajo</button><h2 class="section-title">${esc(p.full_name||'Paciente')}</h2><div class="muted">${esc(d.doctor?.display_name||'Médico')} · canal preferido ${contactChannelLabel(p.preferred_channel||'APP')}</div></div>
       <span class="assistant-status-chip ${d.clinical_alert_summary?.requires_doctor_review?'red':'green'}">${d.clinical_alert_summary?.requires_doctor_review?'Revisión médica pendiente':'Gestión operacional'}</span>
     </section>
@@ -6234,7 +6303,7 @@ function assistantPatientView(){
       <div class="assistant-contact-details"><div><span>Teléfono</span><strong>${esc(p.phone||'No informado')}</strong></div><div><span>WhatsApp</span><strong>${esc(p.whatsapp_phone||'No informado')}</strong></div><div><span>Correo</span><strong>${esc(p.email||'—')}</strong></div><div><span>Horario preferido</span><strong>${esc(p.contact_window||'No informado')}</strong></div></div>
     </section>
 
-    <section class="card"><h2 class="section-title">Controles</h2><div id="assistantControlList">${assistantControlListMarkup(d)}</div></section>
+    <section class="card" id="assistantControlsPanel"><h2 class="section-title">Controles</h2><div id="assistantControlList">${assistantControlListMarkup(d)}</div></section>
 
     <section class="card">
       <h2 class="section-title">Registrar gestión</h2>
@@ -6248,7 +6317,7 @@ function assistantPatientView(){
       </form>
     </section>
 
-    <section class="card">
+    <section class="card" id="assistantTasksPanel">
       <div class="card-head"><div><h2 class="section-title">Tareas</h2><div class="muted">Pendientes de seguimiento remoto.</div></div></div>
       <div id="assistantTaskList">${assistantTaskListMarkup(d)}</div>
       <details class="care-editor-panel"><summary>Crear nueva tarea</summary>
@@ -6264,7 +6333,7 @@ function assistantPatientView(){
       </details>
     </section>
 
-    <section class="card assistant-escalate-card">
+    <section class="card assistant-escalate-card" id="assistantEscalationPanel">
       <h2 class="section-title">Escalar al médico</h2>
       <form id="assistantEscalationForm"><label>Motivo / información relevante</label><textarea id="assistantEscalationNote" rows="3" maxlength="2000" required></textarea><div class="form-actions"><select id="assistantEscalationPriority"><option value="HIGH">Prioridad alta</option><option value="NORMAL">Prioridad normal</option></select><button type="submit" class="danger-btn">Enviar escalación</button></div></form>
     </section>
@@ -6330,9 +6399,9 @@ function doctorView(){
   const settings=alertSettingsValues();
 
   app.innerHTML=shell(`${header()}
-    <section class="card">
+    <section class="card doctor-home-hero" id="doctorHomePanel">
       <div class="card-head">
-        <div><h2 class="section-title">BodyCare Pro</h2><div class="muted">Seguimiento priorizado de pacientes vinculados</div></div>
+        <div><span class="workspace-eyebrow">BodyCare Pro</span><h2 class="section-title">Panel de seguimiento</h2><div class="muted">Seguimiento priorizado de pacientes vinculados</div></div>
         <span class="integration-badge">RNPI pendiente</span>
       </div>
       <div class="integration-note">La validación automática del registro profesional queda pendiente de integración y no bloquea esta versión.</div>
@@ -6367,9 +6436,10 @@ function doctorView(){
         </div>
       </section>
 
+      <div class="doctor-primary-grid">
       ${doctorRemoteOpsMarkup()}
 
-      <section class="card doctor-agenda-card">
+      <section class="card doctor-agenda-card" id="doctorAgendaPanel">
         <div class="card-head">
           <div>
             <h2 class="section-title">Agenda médica</h2>
@@ -6392,16 +6462,17 @@ function doctorView(){
 
         <div id="doctorAgendaList">${doctorAgendaMarkup()}</div>
       </section>
+      </div>
 
       ${doctorOutcomesSectionMarkup()}
 
-      <section class="priority-summary">
+      <section class="priority-summary" id="doctorPrioritySummary">
         <div class="priority-summary-card red"><span>Requiere atención</span><strong id="priorityRedCount">${counts.red}</strong></div>
         <div class="priority-summary-card orange"><span>Revisar</span><strong id="priorityOrangeCount">${counts.orange}</strong></div>
         <div class="priority-summary-card green"><span>Seguimiento normal</span><strong id="priorityGreenCount">${counts.green}</strong></div>
       </section>
 
-      <section class="card">
+      <section class="card doctor-patients-card" id="doctorPatientsPanel">
         <div class="card-head">
           <div>
             <h2 class="section-title">Priorización de pacientes</h2>
@@ -6412,7 +6483,7 @@ function doctorView(){
         <div id="doctorPriorityPatientList">${doctorPriorityPatientsMarkup()}</div>
       </section>
 
-      <section class="card">
+      <section class="card doctor-settings-card" id="doctorSettingsPanel">
         <div class="card-head">
           <div>
             <h2 class="section-title">Criterios de seguimiento</h2>
@@ -6999,7 +7070,7 @@ function doctorPatientDetailView(){
   const waist=[...recs].reverse().find(r=>r.abdominal_circumference_cm!==null&&r.abdominal_circumference_cm!==undefined);
   const editing=d.prescriptions.find(rx=>rx.id===editingPrescriptionId)||null;
   app.innerHTML=shell(`${header()}
-    <section class="card"><div class="doctor-patient-header"><div><button class="linkbtn" id="backPatients">← Mis pacientes</button><h2 class="section-title">${esc(p.full_name)}</h2><div class="muted">Seguimiento desde ${fmt(p.start_date)}</div></div><button type="button" class="primary" id="doctorLongitudinalReport">Generar informe</button></div></section>
+    <section class="card doctor-patient-top-card" id="doctorPatientTop"><div class="doctor-patient-header"><div><button class="linkbtn" id="backPatients">← Mis pacientes</button><h2 class="section-title">${esc(p.full_name)}</h2><div class="muted">Seguimiento desde ${fmt(p.start_date)}</div></div><button type="button" class="primary" id="doctorLongitudinalReport">Generar informe</button></div></section>
     ${doctorAlertPanelMarkup()}
     ${patientOutcomeSummaryMarkup(p.user_id)}
     <section class="metrics">
