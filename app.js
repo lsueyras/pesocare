@@ -6,10 +6,11 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='26.0';
+const APP_VERSION='26.1';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
+const PASSWORD_SETUP_KEY='bodycare_pending_password_setup';
 const REMEMBER_KEY='pesocare_remember_me';
 const SIGNUP_COOLDOWN_KEY='pesocare_signup_cooldown_until';
 const PASSKEY_LOCAL_KEY='bodycare_passkey_enrolled_v1';
@@ -942,10 +943,19 @@ function captureConfirmationHash(){
   const access_token=p.get('access_token');
   const refresh_token=p.get('refresh_token');
   const expires_in=Number(p.get('expires_in')||3600);
+  const authType=String(p.get('type')||'').toLowerCase();
+
   if(access_token){
     saveSession({access_token,refresh_token,expires_at:Date.now()+expires_in*1000},getRememberPreference());
+
+    // Supabase invite/recovery links already create an authenticated session.
+    // BodyCare keeps the session but forces password creation/reset before portal access.
+    if(['invite','recovery'].includes(authType)){
+      localStorage.setItem(PASSWORD_SETUP_KEY,authType);
+    }
+
     history.replaceState(null,'',location.pathname+location.search);
-    return true;
+    return authType||true;
   }
   return false;
 }
@@ -2598,6 +2608,156 @@ async function showSecurityCenter(){
   document.getElementById('closeSecurityCenter')?.addEventListener('click',()=>document.getElementById('securityCenterOverlay')?.remove());
   document.getElementById('securityCenterOverlay')?.addEventListener('click',e=>{if(e.target?.id==='securityCenterOverlay')e.currentTarget.remove()});
   await renderSecurityCenter();
+}
+
+
+function pendingPasswordSetupType(){
+  const value=localStorage.getItem(PASSWORD_SETUP_KEY);
+  return ['invite','recovery'].includes(value)?value:null;
+}
+
+function passwordSetupView(type='invite'){
+  const isRecovery=type==='recovery';
+  app.innerHTML=shell(`
+    <section class="card auth-card password-setup-card">
+      ${brandBlock(isRecovery?'Recupera tu acceso':'Bienvenido a BodyCare')}
+      <div class="password-setup-intro">
+        <span class="password-setup-icon">🔐</span>
+        <div>
+          <h2 class="section-title">${isRecovery?'Crea una nueva contraseña':'Crea tu contraseña'}</h2>
+          <p class="muted">${isRecovery
+            ?'Antes de volver a ingresar, define una nueva contraseña para tu cuenta.'
+            :'Tu invitación ya fue validada. Define tu contraseña antes de acceder por primera vez.'}</p>
+        </div>
+      </div>
+
+      <form id="passwordSetupForm">
+        <label for="newAccountPassword">Nueva contraseña</label>
+        <div class="password-field-wrap">
+          <input id="newAccountPassword" type="password" autocomplete="new-password" minlength="8" required placeholder="Mínimo 8 caracteres">
+          <button type="button" class="password-visibility-btn" data-toggle-password="newAccountPassword" aria-label="Mostrar contraseña">👁</button>
+        </div>
+
+        <label for="confirmAccountPassword" style="margin-top:12px">Confirmar contraseña</label>
+        <div class="password-field-wrap">
+          <input id="confirmAccountPassword" type="password" autocomplete="new-password" minlength="8" required placeholder="Repite la contraseña">
+          <button type="button" class="password-visibility-btn" data-toggle-password="confirmAccountPassword" aria-label="Mostrar contraseña">👁</button>
+        </div>
+
+        <div class="password-requirements">
+          <span id="passwordLengthCheck">○ 8 caracteres o más</span>
+          <span id="passwordMatchCheck">○ Las contraseñas coinciden</span>
+        </div>
+
+        <button type="submit" id="saveInitialPassword" class="primary password-setup-submit">Guardar contraseña y continuar</button>
+        <p id="passwordSetupMsg" class="error"></p>
+      </form>
+
+      <div class="security-help">BodyCare no almacena tu contraseña. El acceso es administrado por Supabase Auth.</div>
+    </section>
+  `);
+
+  const p1=document.getElementById('newAccountPassword');
+  const p2=document.getElementById('confirmAccountPassword');
+
+  const refreshChecks=()=>{
+    const longEnough=(p1?.value||'').length>=8;
+    const match=!!p1?.value&&p1.value===p2?.value;
+    const length=document.getElementById('passwordLengthCheck');
+    const matchEl=document.getElementById('passwordMatchCheck');
+    if(length){
+      length.className=longEnough?'ok':'';
+      length.textContent=`${longEnough?'✓':'○'} 8 caracteres o más`;
+    }
+    if(matchEl){
+      matchEl.className=match?'ok':'';
+      matchEl.textContent=`${match?'✓':'○'} Las contraseñas coinciden`;
+    }
+  };
+
+  p1?.addEventListener('input',refreshChecks);
+  p2?.addEventListener('input',refreshChecks);
+
+  document.querySelectorAll('[data-toggle-password]').forEach(btn=>btn.addEventListener('click',()=>{
+    const input=document.getElementById(btn.dataset.togglePassword);
+    if(!input)return;
+    const show=input.type==='password';
+    input.type=show?'text':'password';
+    btn.textContent=show?'🙈':'👁';
+    btn.setAttribute('aria-label',show?'Ocultar contraseña':'Mostrar contraseña');
+  }));
+
+  document.getElementById('passwordSetupForm')?.addEventListener('submit',e=>completePasswordSetup(e,type));
+}
+
+async function completePasswordSetup(e,type='invite'){
+  e.preventDefault();
+
+  const password=document.getElementById('newAccountPassword')?.value||'';
+  const confirmation=document.getElementById('confirmAccountPassword')?.value||'';
+  const msg=document.getElementById('passwordSetupMsg');
+  const btn=document.getElementById('saveInitialPassword');
+
+  if(msg){
+    msg.className='error';
+    msg.textContent='';
+  }
+
+  if(password.length<8){
+    if(msg)msg.textContent='La contraseña debe tener al menos 8 caracteres.';
+    return;
+  }
+
+  if(password!==confirmation){
+    if(msg)msg.textContent='Las contraseñas no coinciden.';
+    return;
+  }
+
+  try{
+    if(btn){
+      btn.disabled=true;
+      btn.textContent='Guardando…';
+    }
+
+    if(!session?.access_token){
+      const ok=await ensureSession();
+      if(!ok)throw new Error('La sesión de invitación ya no está disponible.');
+    }
+
+    await jsonFetch(`${SUPABASE_URL}/auth/v1/user`,{
+      method:'PUT',
+      headers:authHeaders(session.access_token),
+      body:JSON.stringify({password})
+    });
+
+    // Password exists now; only at this point may the user enter BodyCare.
+    localStorage.removeItem(PASSWORD_SETUP_KEY);
+    sessionStorage.setItem(PASSKEY_UNLOCKED_KEY,'true');
+
+    await loadData();
+    render();
+    startRealtime();
+
+    setTimeout(()=>showToast(
+      type==='recovery'?'Contraseña actualizada':'Cuenta activada',
+      type==='recovery'
+        ?'Tu nueva contraseña quedó guardada.'
+        :'Tu contraseña quedó creada. Ya puedes usar BodyCare normalmente.',
+      'PUSH_TEST'
+    ),250);
+
+    if(type==='invite')setTimeout(()=>maybeOfferPasskeyEnrollment(),700);
+
+  }catch(err){
+    if(msg){
+      msg.className='error';
+      msg.textContent='No fue posible guardar la contraseña: '+friendlyAuthError(String(err.message||err));
+    }
+    if(btn){
+      btn.disabled=false;
+      btn.textContent='Guardar contraseña y continuar';
+    }
+  }
 }
 
 function loginView(message=''){
@@ -5116,7 +5276,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v26.0'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v26.1'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();
@@ -7943,13 +8103,27 @@ async function logout(){
   sessionRefreshPromise=null;
   if(contextSyncTimer){clearInterval(contextSyncTimer);contextSyncTimer=null}
   try{if(session?.access_token)await fetch(`${SUPABASE_URL}/auth/v1/logout`,{method:'POST',headers:authHeaders(session.access_token)})}catch{}
-  clearStoredSession();sessionStorage.removeItem(PASSKEY_UNLOCKED_KEY);session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;doctorPatientDetail=null;assistantProfile=null;assistantDashboard=[];assistantPatientDetail=null;doctorAssistantOps={assistants:[],assignments:[],escalations:[]};availableAssistants=[];
+  clearStoredSession();sessionStorage.removeItem(PASSKEY_UNLOCKED_KEY);localStorage.removeItem(PASSWORD_SETUP_KEY);session=null;currentUser=null;profile=null;records=[];account=null;roles=[];careLinks=[];linkedDoctorProfiles=[];patientControls=[];doctorProfile=null;doctorPatients=[];doctorPriorities=[];doctorAlertSettings=null;doctorAgenda=[];doctorOutcomes=[];doctorTimelineFilter='ALL';doctorTimelineLastSync=0;patientReminderPlan=null;patientReminderSaving=false;patientReminderDirty=false;patientNutritionPlan={plan:null,items:[]};patientNutritionCatalog=[];patientNutritionDay=null;patientNutritionDoctorId=null;doctorPatientDetail=null;assistantProfile=null;assistantDashboard=[];assistantPatientDetail=null;doctorAssistantOps={assistants:[],assignments:[],escalations:[]};availableAssistants=[];
 remoteCareSettings={auto_control_confirmation:true,control_confirmation_hours:48,auto_record_followup:true,record_followup_days:7,auto_care_plan_followup:true,care_plan_lookahead_days:1,auto_nutrition_followup:false,nutrition_no_log_days:2};remoteActionLastRun=null;editingPrescriptionId=null;editingWeightRecordId=null;adminUsers=[];adminTickets=[];adminLoaded=false;loginView();
 }
 
 async function boot(){
   try{
     const confirmed=captureConfirmationHash();
+    const requiredSetup=pendingPasswordSetupType();
+
+    // Invite/recovery sessions can already be authenticated by Supabase.
+    // Password setup must win over passkeys and normal portal rendering.
+    if(requiredSetup){
+      if(await ensureSession()){
+        passwordSetupView(requiredSetup);
+      }else{
+        localStorage.removeItem(PASSWORD_SETUP_KEY);
+        loginView('El enlace de acceso ya no está vigente. Solicita una nueva invitación o recuperación de contraseña.');
+      }
+      return;
+    }
+
     const localPasskey=localStorage.getItem(PASSKEY_LOCAL_KEY)==='true';
     const unlocked=sessionStorage.getItem(PASSKEY_UNLOCKED_KEY)==='true';
 

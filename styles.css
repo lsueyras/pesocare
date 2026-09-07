@@ -2889,3 +2889,20 @@ body{background:var(--bc-bg);color:var(--bc-text)}
   .remote-action-engine-buttons{grid-template-columns:1fr}
   .assistant-task-actions{grid-template-columns:1fr}
 }
+
+/* BodyCare V26.1 — Invitation / recovery password gate */
+.password-setup-card{max-width:500px}
+.password-setup-intro{display:flex;gap:12px;align-items:flex-start;margin:14px 0 18px;padding:13px;border:1px solid #dbe7ff;border-radius:13px;background:#f7f9ff}
+.password-setup-icon{display:grid;place-items:center;width:40px;height:40px;flex:0 0 40px;border-radius:11px;background:#eaf1ff;font-size:1.15rem}
+.password-setup-intro p{margin:4px 0 0;line-height:1.45}
+.password-field-wrap{position:relative}
+.password-field-wrap input{padding-right:48px}
+.password-visibility-btn{position:absolute;right:5px;top:5px;width:38px;height:38px;min-height:38px;padding:0;border:0;border-radius:9px;background:transparent;color:#667085}
+.password-requirements{display:flex;flex-direction:column;gap:4px;margin:10px 0 14px;color:#667085;font-size:.72rem}
+.password-requirements span.ok{color:#027a48;font-weight:700}
+.password-setup-submit{width:100%}
+.password-setup-card .security-help{margin-top:14px;text-align:center}
+@media(max-width:520px){
+  .password-setup-card{margin:12px auto}
+  .password-setup-intro{padding:11px}
+}
