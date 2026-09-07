@@ -6,7 +6,7 @@ const SUPABASE_URL='https://lqmfgxftazazqvultewm.supabase.co';
 const SUPABASE_KEY='sb_publishable_jPT0bQ9OuTC8XYqypqWY5w_GTDI7bGl';
 const APP_URL='https://lsueyras.github.io/pesocare/';
 const BRAND_LOGO_URL=APP_URL+'brand-logo.png';
-const APP_VERSION='25.1';
+const APP_VERSION='25.2';
 const VAPID_PUBLIC_KEY='BFmDmOAgsUFCZO8zPzgfCAwK8oEWdoGppWH-bojgffhCbIm4jkil637a4c7O_ObCgAATS1muWhHniGj-ZdBc31k';
 const BRAND_BUILD='BodyCare';
 const SESSION_KEY='pesocare_session_v2';
@@ -70,6 +70,7 @@ let realtimeAttempts=0, realtimeRef=0, realtimeJoinRef=null, realtimeTopic=null;
 let realtimeStatus='offline', realtimeManuallyStopped=false;
 let realtimeFallbackTimer=null;
 let activePatientTab=localStorage.getItem('pesocare_patient_tab')||'TRACKING';
+if(activePatientTab==='SUPPORT')activePatientTab='PROFILE';
 let supportSyncSeq=0;
 let contextSyncTimer=null, lifecycleSyncBound=false;
 let patientMessagesSyncing=false, patientMessagesSyncPending=false;
@@ -788,7 +789,7 @@ function workspaceTitle(){
   if(activePortal==='DOCTOR')return doctorPatientDetail?.profile?.full_name||'Escritorio médico';
   if(activePortal==='ASSISTANT')return assistantPatientDetail?.patient?.full_name||'Gestión remota';
   if(activePortal==='ADMIN')return 'Administración';
-  return ({TRACKING:'Mi seguimiento',PLAN:'Mi plan',NUTRITION:'Nutrición',DOCTOR:'Mi médico',SUPPORT:'Soporte'})[activePatientTab]||'Mi seguimiento';
+  return ({TRACKING:'Mi seguimiento',PLAN:'Mi plan',NUTRITION:'Nutrición',DOCTOR:'Mi médico',PROFILE:'Perfil'})[activePatientTab]||'Mi seguimiento';
 }
 function workspaceSubtitle(){
   if(activePortal==='DOCTOR')return doctorPatientDetail?'Ficha longitudinal':'Seguimiento clínico-operacional';
@@ -798,7 +799,7 @@ function workspaceSubtitle(){
 }
 function desktopSidebarNavMarkup(){
   if(activePortal==='PATIENT'){
-    const items=[['TRACKING','⌂','Seguimiento'],['PLAN','◎','Mi plan'],['NUTRITION','♨','Nutrición'],['DOCTOR','♡','Mi médico'],['SUPPORT','?','Soporte']];
+    const items=[['TRACKING','⌂','Seguimiento'],['PLAN','◎','Mi plan'],['NUTRITION','♨','Nutrición'],['DOCTOR','♡','Mi médico'],['PROFILE','♙','Perfil']];
     return items.map(([v,i,l])=>`<button type="button" class="bc-side-link ${activePatientTab===v?'active':''}" data-patient-tab="${v}"><span>${i}</span><b>${l}</b></button>`).join('');
   }
   if(activePortal==='DOCTOR'){
@@ -847,7 +848,7 @@ function desktopSidebarMarkup(){
 function mobilePrimaryNavMarkup(){
   if(!currentUser)return '';
   if(activePortal==='PATIENT'){
-    const items=[['TRACKING','⌂','Inicio'],['PLAN','◎','Plan'],['NUTRITION','♨','Nutrición'],['DOCTOR','♡','Médico'],['SUPPORT','?','Soporte']];
+    const items=[['TRACKING','⌂','Inicio'],['PLAN','◎','Plan'],['NUTRITION','♨','Nutrición'],['DOCTOR','♡','Médico'],['PROFILE','♙','Perfil']];
     return `<nav class="bc-mobile-nav">${items.map(([v,i,l])=>`<button type="button" class="${activePatientTab===v?'active':''}" data-patient-tab="${v}"><span>${i}</span><b>${l}</b></button>`).join('')}${activePatientTab==='TRACKING'?`<button type="button" class="bc-mobile-fab" id="mobileRegisterWeightBtn" aria-label="Registrar peso">+</button>`:''}</nav>`;
   }
   if(activePortal==='ASSISTANT'&&!assistantPatientDetail){
@@ -2881,8 +2882,8 @@ function render(){
     result=patientNutritionView();
   }else if(activePatientTab==='DOCTOR'){
     result=patientDoctorView();
-  }else if(activePatientTab==='SUPPORT'){
-    result=patientSupportView();
+  }else if(activePatientTab==='PROFILE'){
+    result=patientProfileView();
   }else{
     result=dashboardView();
   }
@@ -3025,14 +3026,14 @@ function patientSubTabsMarkup(){
     <button type="button" class="patient-subtab ${activePatientTab==='PLAN'?'active':''}" data-patient-tab="PLAN">Mi plan ${planCount?`<span class="subtab-badge">${planCount>99?'99+':planCount}</span>`:''}</button>
     <button type="button" class="patient-subtab ${activePatientTab==='NUTRITION'?'active':''}" data-patient-tab="NUTRITION">Nutrición ${nutritionCount?`<span class="subtab-badge">${nutritionCount>99?'99+':nutritionCount}</span>`:''}</button>
     <button type="button" class="patient-subtab ${activePatientTab==='DOCTOR'?'active':''}" data-patient-tab="DOCTOR">Mi médico ${medicalCount?`<span class="subtab-badge">${medicalCount>99?'99+':medicalCount}</span>`:''}</button>
-    <button type="button" class="patient-subtab ${activePatientTab==='SUPPORT'?'active':''}" data-patient-tab="SUPPORT">Soporte ${openTickets?`<span class="subtab-badge neutral">${openTickets}</span>`:''}</button>
+    <button type="button" class="patient-subtab ${activePatientTab==='PROFILE'?'active':''}" data-patient-tab="PROFILE">Perfil ${openTickets?`<span class="subtab-badge neutral">${openTickets}</span>`:''}</button>
   </nav>`;
 }
 function bindPatientSubTabs(){
   document.querySelectorAll('[data-patient-tab]').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const next=btn.dataset.patientTab;
-      if(!['TRACKING','PLAN','NUTRITION','DOCTOR','SUPPORT'].includes(next))return;
+      if(!['TRACKING','PLAN','NUTRITION','DOCTOR','PROFILE'].includes(next))return;
       activePatientTab=next;
       localStorage.setItem('pesocare_patient_tab',next);
       supportSyncSeq++;
@@ -3061,7 +3062,7 @@ async function syncVisibleContext(){
     if(activePortal==='PATIENT'&&activePatientTab==='PLAN')await syncPatientCarePlan(true);
     else if(activePortal==='PATIENT'&&activePatientTab==='NUTRITION')await syncPatientNutrition(true);
     else if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR')await syncPatientMedicalData();
-    else if(activePortal==='PATIENT'&&activePatientTab==='SUPPORT')await syncSupportTickets();
+    else if(activePortal==='PATIENT'&&activePatientTab==='PROFILE')await syncSupportTickets();
     else if(activePortal==='DOCTOR'&&doctorPatientDetail?.profile?.user_id)await syncDoctorMedicalData(doctorPatientDetail.profile.user_id);
     else if(activePortal==='DOCTOR'&&!doctorPatientDetail)await syncDoctorHomeData();
     else if(activePortal==='ASSISTANT'&&assistantPatientDetail?.patient?.user_id)await syncAssistantPatient(true);
@@ -3082,7 +3083,7 @@ function startContextSync(){
   }else if(activePortal==='PATIENT'&&activePatientTab==='DOCTOR'){
     syncPatientMedicalData();
     contextSyncTimer=setInterval(()=>syncPatientMedicalData(),3000);
-  }else if(activePortal==='PATIENT'&&activePatientTab==='SUPPORT'){
+  }else if(activePortal==='PATIENT'&&activePatientTab==='PROFILE'){
     syncSupportTickets();
     contextSyncTimer=setInterval(()=>syncSupportTickets(),10000);
   }else if(activePortal==='DOCTOR'&&doctorPatientDetail?.profile?.user_id){
@@ -3811,17 +3812,93 @@ function patientDoctorView(){
   const selectedControlStored=localStorage.getItem('bodycare_selected_control_doctor');
   const selectedControlDoctor=linkedDoctorProfiles.some(d=>d.user_id===selectedControlStored)?selectedControlStored:(selectedDoctor||linkedDoctorProfiles[0]?.user_id||'');
 
+  const nextControl=[...(patientControls||[])]
+    .filter(c=>['SCHEDULED','CONFIRMED'].includes(c.status)&&new Date(c.scheduled_at)>=new Date())
+    .sort((a,b)=>String(a.scheduled_at).localeCompare(String(b.scheduled_at)))[0]||null;
+
   app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
-    <section class="card patient-section-hero">
+    <section class="card patient-section-hero patient-doctor-hero">
       <div>
+        <span class="workspace-eyebrow">Atención conectada</span>
         <h2 class="section-title">Mi médico</h2>
-        <div class="muted">Controles, mensajes, indicaciones y profesionales autorizados en un solo lugar.</div>
+        <div class="muted">Primero lo que necesitas usar: controles, conversación e indicaciones.</div>
       </div>
       <span class="realtime-pill"><i class="live-dot ${realtimeStatus==='live'?'online':realtimeStatus==='connecting'?'connecting':'offline'}"></i>Sincronización automática</span>
     </section>
 
-    <section class="card">
-      <h2 class="section-title">Profesionales vinculados</h2>
+    <section class="card doctor-next-control-card" id="patientControlsSection">
+      <div class="card-head">
+        <div>
+          <span class="patient-card-kicker">Próximo control</span>
+          <h2 class="section-title">${nextControl?formatControlDateTime(nextControl.scheduled_at):'Agenda médica'}</h2>
+          <div class="muted">${nextControl?`${controlStatusLabel(nextControl.status)} · ${validControlSlotMinutes(nextControl.slot_minutes||30)} minutos`:'Agenda, confirma o revisa tus próximos controles.'}</div>
+        </div>
+        ${nextControl?`<span class="status-chip ${nextControl.status==='CONFIRMED'?'status-active':'status-in_progress'}">${controlStatusLabel(nextControl.status)}</span>`:''}
+      </div>
+
+      ${linkedDoctorProfiles.length?`
+        <details class="patient-control-scheduler" ${nextControl?'':'open'}>
+          <summary>${nextControl?'Agendar otro control':'Agendar control'}</summary>
+          <form id="patientControlForm" class="control-form">
+            <div class="grid control-grid">
+              <div>
+                <label for="patientControlDoctorSelect">Médico</label>
+                <select id="patientControlDoctorSelect" required>
+                  ${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}" ${d.user_id===selectedControlDoctor?'selected':''}>${esc(d.display_name||'Médico')}</option>`).join('')}
+                </select>
+              </div>
+              <div>
+                <label for="patientControlDate">Fecha</label>
+                <input id="patientControlDate" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(today())}" required>
+              </div>
+              <div>
+                <label for="patientControlTime">Hora</label>
+                <div class="time-control-frame"><input id="patientControlTime" type="time" required></div>
+              </div>
+            </div>
+            <div id="patientControlSlotInfo" class="slot-info control-slot-info-full">Bloques definidos por el médico: ${validControlSlotMinutes(linkedDoctorProfiles.find(d=>d.user_id===selectedControlDoctor)?.control_slot_minutes||30)} minutos.</div>
+            <div id="patientControlAvailability" class="control-availability"></div>
+            <label for="patientControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>
+            <textarea id="patientControlNotes" rows="2" maxlength="1000" placeholder="Ej: control de evolución"></textarea>
+            <div class="form-actions"><button class="primary" type="submit">Registrar control</button></div>
+          </form>
+        </details>
+        <div id="patientControlSyncStatus" class="control-sync-status syncing"><span class="control-sync-dot"></span><span>Actualizando controles…</span></div>
+        <div id="patientControlList">${controlListMarkup(patientControls,'patient')}</div>`
+        :'<div class="empty-state">Vincula un médico para registrar controles compartidos.</div>'}
+    </section>
+
+    <section class="card patient-doctor-message-card">
+      <div class="card-head">
+        <div><span class="patient-card-kicker">Comunicación</span><h2 class="section-title">Mensajes</h2><div class="muted">Conversa directamente con tu profesional.</div></div>
+        ${linkedDoctorProfiles.length?'<button type="button" class="link-danger" id="patientClearConversation">Eliminar historial</button>':''}
+      </div>
+      ${linkedDoctorProfiles.length?`
+        ${linkedDoctorProfiles.length>1?`<label for="patientDoctorSelect">Conversación con</label>
+        <select id="patientDoctorSelect">${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}" ${d.user_id===selectedDoctor?'selected':''}>${esc(d.display_name||'Médico')}</option>`).join('')}</select>`:
+        `<input id="patientDoctorSelect" type="hidden" value="${selectedDoctor}">`}
+        <div id="patientChatSyncStatus" class="chat-sync-status syncing"><span class="chat-sync-dot"></span><span>Actualizando conversación…</span></div>
+        <div id="patientMessageThread" class="message-thread"></div>
+        <form id="patientMessageForm" class="message-form">
+          <textarea id="patientMessageText" rows="3" maxlength="4000" placeholder="Escribe un mensaje..." required></textarea>
+          <button class="primary" type="submit">Enviar</button>
+        </form>`
+      :'<div class="empty-state">Vincula un médico para habilitar mensajería.</div>'}
+    </section>
+
+    <section class="card patient-prescriptions-card">
+      <div class="card-head">
+        <div><span class="patient-card-kicker">Tratamiento</span><h2 class="section-title">Indicaciones compartidas</h2></div>
+      </div>
+      <div class="integration-note">La receta electrónica, firma y conexión SNRE permanecen pendientes. Estas indicaciones funcionan dentro de BodyCare y no sustituyen todavía una receta oficial.</div>
+      <div id="patientPrescriptionSyncStatus" class="rx-sync-status syncing"><span class="rx-sync-dot"></span><span>Actualizando indicaciones…</span></div>
+      <div id="patientPrescriptionList">${patientPrescriptionListMarkup()}</div>
+    </section>
+
+    <section class="card patient-linked-doctors-card">
+      <div class="card-head">
+        <div><span class="patient-card-kicker">Configuración de atención</span><h2 class="section-title">Profesionales vinculados</h2><div class="muted">Normalmente solo necesitarás modificar esta sección cuando cambie tu equipo tratante.</div></div>
+      </div>
       ${linkedDoctorProfiles.length
         ? linkedDoctorProfiles.map(d=>`
           <div class="doctor-row">
@@ -3833,117 +3910,140 @@ function patientDoctorView(){
             <button type="button" class="secondary small-btn" data-revoke-doctor="${d.user_id}">Desvincular</button>
           </div>`).join('')
         : '<div class="empty-state">Aún no has vinculado un médico.</div>'}
-      <form id="linkDoctorForm" class="inline-form">
-        <input id="doctorEmail" type="email" placeholder="Correo del médico" required>
-        <button class="secondary" type="submit">Vincular médico</button>
-      </form>
-      <p id="doctorLinkMsg" class="error"></p>
-    </section>
-
-    ${patientContactCardMarkup()}
-
-    ${patientReminderCardMarkup()}
-
-    <section class="card" id="patientControlsSection">
-      <div class="card-head">
-        <div>
-          <h2 class="section-title">Controles</h2>
-          <div class="muted">Médico y paciente pueden agendar controles. El paciente puede confirmar asistencia y el resultado queda compartido en el historial.</div>
-        </div>
-      </div>
-      ${linkedDoctorProfiles.length?`
-        <form id="patientControlForm" class="control-form">
-          <div class="grid control-grid">
-            <div>
-              <label for="patientControlDoctorSelect">Médico</label>
-              <select id="patientControlDoctorSelect" required>
-                ${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}" ${d.user_id===selectedControlDoctor?'selected':''}>${esc(d.display_name||'Médico')}</option>`).join('')}
-              </select>
-            </div>
-            <div>
-              <label for="patientControlDate">Fecha</label>
-              <input id="patientControlDate" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(today())}" required>
-            </div>
-            <div>
-              <label for="patientControlTime">Hora</label>
-              <div class="time-control-frame">
-                <input id="patientControlTime" type="time" required>
-              </div>
-            </div>
-          </div>
-          <div id="patientControlSlotInfo" class="slot-info control-slot-info-full">Bloques definidos por el médico: ${validControlSlotMinutes(linkedDoctorProfiles.find(d=>d.user_id===selectedControlDoctor)?.control_slot_minutes||30)} minutos.</div>
-          <div id="patientControlAvailability" class="control-availability"></div>
-          <label for="patientControlNotes" style="margin-top:10px">Observación <span class="muted">(opcional)</span></label>
-          <textarea id="patientControlNotes" rows="2" maxlength="1000" placeholder="Ej: control de evolución"></textarea>
-          <div class="form-actions"><button class="primary" type="submit">Registrar control</button></div>
+      <details class="patient-link-doctor-details">
+        <summary>Vincular otro profesional</summary>
+        <form id="linkDoctorForm" class="inline-form">
+          <input id="doctorEmail" type="email" placeholder="Correo del médico" required>
+          <button class="secondary" type="submit">Vincular médico</button>
         </form>
-        <div id="patientControlSyncStatus" class="control-sync-status syncing"><span class="control-sync-dot"></span><span>Actualizando controles…</span></div>
-        <div id="patientControlList">${controlListMarkup(patientControls,'patient')}</div>`
-        :'<div class="empty-state">Vincula un médico para registrar controles compartidos.</div>'}
-    </section>
-
-    <section class="card">
-      <h2 class="section-title">Indicaciones compartidas</h2>
-      <div class="integration-note">La receta electrónica, firma y conexión SNRE quedan pendientes. Estas indicaciones funcionan dentro de BodyCare y no sustituyen todavía una receta oficial.</div>
-      <div id="patientPrescriptionSyncStatus" class="rx-sync-status syncing"><span class="rx-sync-dot"></span><span>Actualizando indicaciones…</span></div>
-      <div id="patientPrescriptionList">${patientPrescriptionListMarkup()}</div>
-    </section>
-
-    <section class="card">
-      <div class="card-head">
-        <div><h2 class="section-title">Mensajes</h2><div class="muted">La conversación se actualiza automáticamente.</div></div>
-        ${linkedDoctorProfiles.length?'<button type="button" class="link-danger" id="patientClearConversation">Eliminar historial</button>':''}
-      </div>
-      ${linkedDoctorProfiles.length?`
-        <label for="patientDoctorSelect">Conversación con</label>
-        <select id="patientDoctorSelect">
-          ${linkedDoctorProfiles.map(d=>`<option value="${d.user_id}" ${d.user_id===selectedDoctor?'selected':''}>${esc(d.display_name||'Médico')}</option>`).join('')}
-        </select>
-        <div id="patientChatSyncStatus" class="chat-sync-status syncing"><span class="chat-sync-dot"></span><span>Actualizando conversación…</span></div>
-        <div id="patientMessageThread" class="message-thread"></div>
-        <form id="patientMessageForm" class="message-form">
-          <textarea id="patientMessageText" rows="3" maxlength="4000" placeholder="Escribe un mensaje..." required></textarea>
-          <button class="primary" type="submit">Enviar mensaje</button>
-        </form>`
-      :'<div class="empty-state">Vincula un médico para habilitar mensajería.</div>'}
+        <p id="doctorLinkMsg" class="error"></p>
+      </details>
     </section>`);
 
   bindCommonHeader();
   bindPatientSubTabs();
   bindPatientCare();
-  document.getElementById('patientContactForm')?.addEventListener('submit',savePatientContactDetails);
-  bindPatientReminderPreferences();
-  setTimeout(()=>syncPatientReminderPlan(false),0);
   renderPatientPrescriptionList();
   renderPatientMessageThread();
   renderPatientControls();
   markVisibleMedicalNotifications();
 }
 
-function patientSupportView(){
+function patientProfileView(){
+  const openTickets=(supportTickets||[]).filter(t=>t.status!=='RESOLVED').length;
+  const c=patientContactDetails||{};
+
   app.innerHTML=shell(`${header()}${patientSubTabsMarkup()}
-    <section class="card patient-section-hero">
-      <div><h2 class="section-title">Soporte BodyCare</h2><div class="muted">Reporta incidencias y revisa el estado de tus solicitudes.</div></div>
+    <section class="card patient-section-hero patient-profile-hero">
+      <div>
+        <span class="workspace-eyebrow">Cuenta y preferencias</span>
+        <h2 class="section-title">Perfil</h2>
+        <div class="muted">Datos personales, contacto, seguridad, preferencias y soporte en un solo lugar.</div>
+      </div>
+      <span class="profile-completion-chip">${c.phone||c.whatsapp_phone?'Contacto configurado':'Completar contacto'}</span>
     </section>
-    <section class="card">
-      <h2 class="section-title">Nueva solicitud</h2>
-      <form id="supportForm">
-        <div class="grid">
-          <div><label>Asunto</label><input id="supportSubject" required placeholder="Ej: No puedo registrar un dato"></div>
-          <div><label>Descripción</label><textarea id="supportDescription" rows="4" required></textarea></div>
+
+    <div class="patient-profile-grid">
+      <section class="card profile-personal-card">
+        <div class="card-head">
+          <div><h2 class="section-title">Datos personales</h2><div class="muted">Información básica de tu cuenta BodyCare.</div></div>
         </div>
-        <button class="primary" type="submit" style="margin-top:12px">Enviar solicitud</button>
-        <p id="supportMsg" class="error"></p>
-      </form>
-    </section>
-    <section class="card">
-      <h2 class="section-title">Mis solicitudes</h2>
-      <div id="supportTicketList">${supportTicketListMarkup()}</div>
+        <form id="patientPersonalProfileForm">
+          <div class="grid profile-personal-grid">
+            <div><label for="profileFullName">Nombre completo</label><input id="profileFullName" value="${esc(profile?.full_name||'')}" required></div>
+            <div><label for="profileBirthDate">Fecha de nacimiento</label><input id="profileBirthDate" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" data-date-cl value="${formatDateCL(profile?.birth_date||'')}"></div>
+            <div class="profile-readonly-field"><label>Correo de acceso</label><div>${esc(currentUser?.email||account?.email_snapshot||'—')}</div></div>
+            <div class="profile-readonly-field"><label>Inicio de seguimiento</label><div>${fmt(profile?.start_date)}</div></div>
+          </div>
+          <button type="submit" class="secondary" style="margin-top:10px">Guardar datos personales</button>
+        </form>
+      </section>
+
+      <section class="card profile-security-card">
+        <div class="card-head">
+          <div><h2 class="section-title">Seguridad y acceso</h2><div class="muted">Contraseña, biometría y dispositivos autorizados.</div></div>
+          <span class="profile-security-icon">🔐</span>
+        </div>
+        <p class="profile-card-copy">Administra Face ID, huella o Passkeys desde el centro de seguridad.</p>
+        <button type="button" class="secondary" id="openProfileSecurity">Abrir seguridad</button>
+      </section>
+    </div>
+
+    ${patientContactCardMarkup()}
+
+    ${patientReminderCardMarkup()}
+
+    <section class="card profile-support-card" id="patientProfileSupport">
+      <div class="card-head">
+        <div>
+          <h2 class="section-title">Soporte BodyCare</h2>
+          <div class="muted">Ayuda técnica y seguimiento de solicitudes. ${openTickets?`Tienes ${openTickets} solicitud${openTickets===1?'':'es'} abierta${openTickets===1?'':'s'}.`:''}</div>
+        </div>
+        ${openTickets?`<span class="support-open-chip">${openTickets} abierta${openTickets===1?'':'s'}</span>`:''}
+      </div>
+
+      <details class="profile-support-new">
+        <summary>Nueva solicitud de soporte</summary>
+        <form id="supportForm">
+          <div class="grid">
+            <div><label>Asunto</label><input id="supportSubject" required placeholder="Ej: No puedo registrar un dato"></div>
+            <div><label>Descripción</label><textarea id="supportDescription" rows="4" required></textarea></div>
+          </div>
+          <button class="primary" type="submit" style="margin-top:12px">Enviar solicitud</button>
+          <p id="supportMsg" class="error"></p>
+        </form>
+      </details>
+
+      <div class="profile-support-history">
+        <h3>Mis solicitudes</h3>
+        <div id="supportTicketList">${supportTicketListMarkup()}</div>
+      </div>
     </section>`);
 
   bindCommonHeader();
   bindPatientSubTabs();
   bindPatientCare();
+  document.getElementById('patientContactForm')?.addEventListener('submit',savePatientContactDetails);
+  document.getElementById('patientPersonalProfileForm')?.addEventListener('submit',savePatientPersonalProfile);
+  document.getElementById('openProfileSecurity')?.addEventListener('click',showSecurityCenter);
+  bindPatientReminderPreferences();
+  bindDateCLInputs();
+  setTimeout(()=>syncPatientReminderPlan(false),0);
+  setTimeout(()=>syncSupportTickets(),0);
+}
+
+async function savePatientPersonalProfile(e){
+  e.preventDefault();
+  const name=document.getElementById('profileFullName')?.value.trim()||'';
+  if(!name){alert('Ingresa tu nombre completo.');return}
+
+  let birthDate=null;
+  try{
+    birthDate=requireDateCL('profileBirthDate','Fecha de nacimiento',true);
+  }catch(err){
+    alert(err.message);
+    return;
+  }
+
+  try{
+    await dbUpdate('profiles',`user_id=eq.${encodeURIComponent(currentUser.id)}`,{
+      full_name:name,
+      birth_date:birthDate,
+      updated_at:new Date().toISOString()
+    });
+    profile={...profile,full_name:name,birth_date:birthDate};
+    showToast('Perfil actualizado','Tus datos personales quedaron guardados.','PUSH_TEST');
+    patientProfileView();
+  }catch(err){
+    alert('No fue posible actualizar el perfil: '+err.message);
+  }
+}
+
+/* Compatibilidad con enlaces antiguos de soporte */
+function patientSupportView(){
+  activePatientTab='PROFILE';
+  localStorage.setItem('pesocare_patient_tab','PROFILE');
+  patientProfileView();
 }
 
 
@@ -4992,7 +5092,7 @@ function bindPatientCare(){
         user_id:currentUser.id,
         subject:document.getElementById('supportSubject').value.trim(),
         description:document.getElementById('supportDescription').value.trim(),
-        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v25.1'}
+        technical_context:{user_agent:navigator.userAgent,url:location.href,app_version:'BodyCare v25.2'}
       });
       msg.className='notice success';msg.textContent='Solicitud enviada a BodyCare Admin.';
       e.target.reset();

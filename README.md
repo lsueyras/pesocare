@@ -698,3 +698,24 @@ https://lsueyras.github.io/pesocare/
 - Móvil asistente: Inicio/Hoy/Pendientes/Escalar.
 - Móvil médico: Inicio/Agenda/Pacientes/Equipo.
 - Sin cambios de backend ni permisos.
+
+
+## BodyCare V25.2 — Perfil & Prioridad de uso
+- Menú paciente: Inicio / Plan / Nutrición / Médico / Perfil.
+- `Soporte` deja de ser una pestaña principal y pasa a Perfil.
+- Contactabilidad sale de `Mi médico` y pasa a Perfil.
+- Recordatorios/preferencias pasan a Perfil.
+- Seguridad/Passkeys queda accesible desde Perfil.
+- Perfil incluye:
+  - datos personales;
+  - contactabilidad;
+  - preferencias de recordatorios;
+  - seguridad biométrica;
+  - soporte y tickets.
+- `Mi médico` se reordena por frecuencia:
+  1. próximo control / agenda;
+  2. mensajes;
+  3. indicaciones;
+  4. profesionales vinculados.
+- Compatibilidad: usuarios que tenían `SUPPORT` guardado se redirigen automáticamente a `PROFILE`.
+- Sin cambios de backend.

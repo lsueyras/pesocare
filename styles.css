@@ -2800,3 +2800,42 @@ body{background:var(--bc-bg);color:var(--bc-text)}
   .assistant-mobile-nav{display:none!important}
 }
 @media(max-width:430px){.bc-workspace{padding-left:9px;padding-right:9px}.bc-topbar{margin-left:-9px!important;margin-right:-9px!important;padding-left:9px;padding-right:9px}.bc-mobile-brand strong{display:none}.bc-topbar .top-actions{gap:5px}.assistant-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.assistant-detail-metrics,.assistant-contact-details{grid-template-columns:1fr 1fr!important}}
+
+/* BodyCare V25.2 — Perfil + priorización por frecuencia */
+.patient-doctor-hero{background:linear-gradient(135deg,#fff 20%,#f1f7ff 100%)}
+.patient-card-kicker{display:block;margin-bottom:3px;color:#175cd3;font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+.doctor-next-control-card{border-color:#c7d7fe!important}
+.patient-control-scheduler{margin:12px 0;padding:10px 12px;border:1px solid #e4e7ec;border-radius:11px;background:#fafbfc}
+.patient-control-scheduler summary,.patient-link-doctor-details summary,.profile-support-new summary{cursor:pointer;color:#175cd3;font-size:.72rem;font-weight:800}
+.patient-link-doctor-details{margin-top:10px;padding-top:10px;border-top:1px solid #eaecf0}
+.patient-linked-doctors-card{background:#fbfcfe!important}
+.patient-doctor-message-card .message-thread{min-height:160px}
+.patient-prescriptions-card .integration-note{margin-top:8px}
+
+.patient-profile-hero{background:linear-gradient(135deg,#fff 20%,#f4f7ff 100%)}
+.profile-completion-chip,.support-open-chip{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:#eff8ff;color:#175cd3;font-size:.65rem;font-weight:800}
+.patient-profile-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,.8fr);gap:12px}
+.patient-profile-grid>.card{margin-bottom:0}
+.profile-personal-grid{grid-template-columns:1fr 1fr}
+.profile-readonly-field>div{min-height:48px;display:flex;align-items:center;padding:10px 12px;border:1px solid #eaecf0;border-radius:12px;background:#f9fafb;color:#475467;font-size:.78rem;overflow-wrap:anywhere}
+.profile-security-card{display:flex;flex-direction:column}.profile-security-icon{font-size:1.25rem}.profile-card-copy{flex:1;color:#667085;font-size:.72rem;line-height:1.45}
+#patientContactCard{margin-top:12px}
+.profile-support-card{margin-top:12px}
+.profile-support-new{margin-top:10px;padding:11px 12px;border:1px solid #e4e7ec;border-radius:11px;background:#fafbfc}
+.profile-support-new form{margin-top:12px}
+.profile-support-history{margin-top:15px;padding-top:12px;border-top:1px solid #eaecf0}
+.profile-support-history h3{margin:0 0 7px;color:#344054;font-size:.78rem}
+
+@media(max-width:950px){
+  .patient-profile-grid{grid-template-columns:1fr}
+  .patient-profile-grid>.card{margin-bottom:0}
+}
+@media(max-width:760px){
+  .patient-doctor-message-card{order:1}
+  .doctor-next-control-card{order:0}
+  .profile-personal-grid{grid-template-columns:1fr}
+  .patient-profile-grid{display:block}
+  .patient-profile-grid>.card{margin-bottom:10px}
+  .profile-support-card{margin-bottom:18px!important}
+  .doctor-next-control-card .card-head{align-items:flex-start}
+}
